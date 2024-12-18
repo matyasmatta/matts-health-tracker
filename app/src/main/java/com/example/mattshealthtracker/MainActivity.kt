@@ -212,7 +212,7 @@ fun MedicationScreen() {
                     dbHelper.insertMedicationData(data)
 
                     // Show toast
-                    Toast.makeText(context, "Medication data saved!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Medication data added and exported", Toast.LENGTH_SHORT).show()
 
                     // Save to CSV
                     dbHelper.exportToCSV(context)
@@ -431,7 +431,7 @@ fun HealthTrackerScreen() {
                 dbHelper.exportToCSV(context)
 
                 // Show a Toast to inform the user that the data was added successfully
-                Toast.makeText(context, "Data added successfully", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Data added and exported successfully", Toast.LENGTH_SHORT).show()
             },
             modifier = Modifier.align(Alignment.CenterHorizontally)
         ) {
