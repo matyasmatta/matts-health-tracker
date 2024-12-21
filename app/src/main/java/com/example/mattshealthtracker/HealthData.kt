@@ -28,3 +28,10 @@ data class MedicationData(
     val probioticsEvening: Boolean,
     val sideEffects: String
 )
+
+data class ExerciseData (
+    val id: Int = 0,
+    val timestamp: String,
+    val pushups: Int = 0,
+    val posture: Int =0
+)

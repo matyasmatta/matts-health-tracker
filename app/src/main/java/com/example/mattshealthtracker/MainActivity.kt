@@ -18,11 +18,13 @@ import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
+import android.content.Context
+import androidx.compose.material.icons.filled.Delete
 
 
 class MainActivity : ComponentActivity() {
@@ -41,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
     object AddData : BottomNavItem("add_data", "Add Data", Icons.Default.Add)
-    object BrowseData : BottomNavItem("browse_data", "Browse Data", Icons.Default.List)
+    object Exercises : BottomNavItem("exercises", "Exercises", Icons.Default.Refresh) // New tab
     object MedicationTracking : BottomNavItem("medication_tracking", "Medication", Icons.Default.Check) // New Screen
 }
 
@@ -55,7 +57,7 @@ fun HealthTrackerApp() {
             NavigationBar {
                 listOf(
                     BottomNavItem.AddData,
-                    BottomNavItem.BrowseData,
+                    BottomNavItem.Exercises,
                     BottomNavItem.MedicationTracking // Add to navigation bar
                 ).forEach { item ->
                     NavigationBarItem(
@@ -71,8 +73,112 @@ fun HealthTrackerApp() {
         Box(modifier = Modifier.padding(innerPadding)) {
             when (currentScreen) {
                 is BottomNavItem.AddData -> HealthTrackerScreen() // Add Data Screen
-                is BottomNavItem.BrowseData -> BrowseDataScreen() // Browse Data Screen
+                is BottomNavItem.Exercises -> ExercisesScreen() // Browse Data Screen
                 is BottomNavItem.MedicationTracking -> MedicationScreen() // Medication Screen
+            }
+        }
+    }
+}
+
+@Composable
+fun ExercisesScreen() {
+    val context = LocalContext.current
+    val dbhelper = ExerciseDatabaseHelper(context)
+    val preferences = context.getSharedPreferences("exercise_tracker", Context.MODE_PRIVATE)
+    val editor = preferences.edit()
+
+    var pushUps by remember { mutableStateOf(preferences.getInt("pushUps", 0)) }
+    var postureCorrections by remember { mutableStateOf(preferences.getInt("postureCorrections", 0)) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Exercise Tracker", style = MaterialTheme.typography.headlineMedium)
+
+        ExerciseCounter(
+            label = "Push-Ups",
+            count = pushUps,
+            onIncrement = {
+                pushUps += 5
+                editor.putInt("pushUps", pushUps).apply()
+            },
+            onDecrement = {
+                if (pushUps > 0) {
+                    pushUps--
+                    editor.putInt("pushUps", pushUps).apply()
+                }
+            }
+        )
+
+        ExerciseCounter(
+            label = "Posture Corrections",
+            count = postureCorrections,
+            onIncrement = {
+                postureCorrections++
+                editor.putInt("postureCorrections", postureCorrections).apply()
+            },
+            onDecrement = {
+                if (postureCorrections > 0) {
+                    postureCorrections--
+                    editor.putInt("postureCorrections", postureCorrections).apply()
+                }
+            }
+        )
+
+        // Submit Button
+        Button(
+            onClick = {
+
+                // Insert data into the database
+                dbhelper.insertData(
+                    ExerciseData(
+                        id = 0, // Auto-increment ID
+                        timestamp = "", // Let the database handle the timestamp
+                        pushups = pushUps,
+                        posture = postureCorrections
+                    )
+                )
+                dbhelper.exportToCSV(context)
+
+                // Reset input fields
+                pushUps = 0
+                postureCorrections = 0
+
+                Toast.makeText(context, "Data submitted successfully!", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Submit")
+        }
+    }
+}
+
+@Composable
+fun ExerciseCounter(
+    label: String,
+    count: Int,
+    onIncrement: () -> Unit,
+    onDecrement: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onDecrement) {
+                Icon(imageVector = Icons.Default.Delete, contentDescription = "Minus One")
+            }
+            Text("$count", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 8.dp))
+            IconButton(onClick = onIncrement) {
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Plus One")
             }
         }
     }
