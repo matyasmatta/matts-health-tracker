@@ -111,6 +111,11 @@ class ExerciseDatabaseHelper (context: Context) :
                 // Write header
                 writer.write("ID,Timestamp,Pushups,Posture\n")
 
+                // Write each row of data
+                for (item in data) {
+                    writer.write("${item.id},${item.timestamp},${item.pushups},${item.posture}\n")
+                }
+
                 writer.close()
                 Log.d("CSVExport", "Exported data to CSV file.")
             } catch (e: IOException) {

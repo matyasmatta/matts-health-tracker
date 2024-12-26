@@ -1,5 +1,12 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.MattsHealthTracker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Light theme primary color -->
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryVariant">@color/purple_700</item>
+        <item name="colorOnPrimary">@color/white</item>
 
-    <style name="Theme.MattsHealthTracker" parent="android:Theme.Material.Light.NoActionBar" />
+        <!-- Light theme background color -->
+        <item name="android:windowBackground">@color/white</item>
+        <item name="colorOnBackground">@color/black</item>
+    </style>
 </resources>

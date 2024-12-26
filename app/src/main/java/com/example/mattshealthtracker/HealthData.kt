@@ -15,8 +15,7 @@ data class HealthData(
 )
 
 data class MedicationData(
-    val id: Int = 0,
-    val timestamp: String,
+    val currentDate: String,
     val doxyLactose: Boolean,
     val doxyMeal: Boolean,
     val doxyDose: Boolean,

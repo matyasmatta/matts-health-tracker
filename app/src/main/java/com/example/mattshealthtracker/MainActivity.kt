@@ -25,15 +25,17 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import android.content.Context
 import androidx.compose.material.icons.filled.Delete
-
+import com.example.mattshealthtracker.ui.theme.MattsHealthTrackerTheme
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            // Wrap the app with MaterialTheme to handle dark/light mode
+            MattsHealthTrackerTheme {
                 // Provide a Surface for the HealthTrackerApp
-                Surface {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     HealthTrackerApp()
                 }
             }
@@ -187,19 +189,79 @@ fun ExerciseCounter(
 @Composable
 fun MedicationScreen() {
     val context = LocalContext.current
-    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-    val currentDate = dateFormat.format(Date())
+    val currentDate =SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    val dbHelper = MedicationDatabaseHelper(context)
 
-    var doxyLactose by remember { mutableStateOf(false) }
-    var doxyMeal by remember { mutableStateOf(false) }
-    var doxyDose by remember { mutableStateOf(false) }
-    var doxyWater by remember { mutableStateOf(false) }
-    var prednisoneDose by remember { mutableStateOf(false) }
-    var prednisoneMeal by remember { mutableStateOf(false) }
-    var vitamins by remember { mutableStateOf(false) }
-    var probioticsMorning by remember { mutableStateOf(false) }
-    var probioticsEvening by remember { mutableStateOf(false) }
-    var sideEffects by remember { mutableStateOf("") }
+    // Fetch medication data from the database
+    var medicationData by remember { mutableStateOf<MedicationData?>(null) }
+
+    LaunchedEffect(Unit) {
+        medicationData = dbHelper.fetchMedicationDataForToday()
+    }
+
+    // Medication state
+    var doxyLactose by remember { mutableStateOf(medicationData?.doxyLactose ?: false) }
+    var doxyMeal by remember { mutableStateOf(medicationData?.doxyMeal ?: false) }
+    var doxyDose by remember { mutableStateOf(medicationData?.doxyDose ?: false) }
+    var doxyWater by remember { mutableStateOf(medicationData?.doxyWater ?: false) }
+    var prednisoneDose by remember { mutableStateOf(medicationData?.prednisoneDose ?: false) }
+    var prednisoneMeal by remember { mutableStateOf(medicationData?.prednisoneMeal ?: false) }
+    var vitamins by remember { mutableStateOf(medicationData?.vitamins ?: false) }
+    var probioticsMorning by remember { mutableStateOf(medicationData?.probioticsMorning ?: false) }
+    var probioticsEvening by remember { mutableStateOf(medicationData?.probioticsEvening ?: false) }
+    var sideEffects by remember { mutableStateOf(medicationData?.sideEffects ?: "") }
+
+    LaunchedEffect(medicationData) {
+        medicationData?.let {
+            doxyLactose = it.doxyLactose
+            doxyMeal = it.doxyMeal
+            doxyDose = it.doxyDose
+            doxyWater = it.doxyWater
+            prednisoneDose = it.prednisoneDose
+            prednisoneMeal = it.prednisoneMeal
+            vitamins = it.vitamins
+            probioticsMorning = it.probioticsMorning
+            probioticsEvening = it.probioticsEvening
+            sideEffects = it.sideEffects
+        }
+    }
+
+    // Save to the database whenever any toggle state changes
+    fun saveMedicationData() {
+        Log.d("MedicationScreen", "Saving medication data.")
+        dbHelper.insertOrUpdateMedicationData(MedicationData(
+            currentDate = currentDate,
+            doxyLactose = doxyLactose,
+            doxyMeal = doxyMeal,
+            doxyDose = doxyDose,
+            doxyWater = doxyWater,
+            prednisoneDose = prednisoneDose,
+            prednisoneMeal = prednisoneMeal,
+            vitamins = vitamins,
+            probioticsMorning = probioticsMorning,
+            probioticsEvening = probioticsEvening,
+            sideEffects = sideEffects
+        ))
+    }
+
+    // Define a Composable for Medication Tasks
+    @Composable
+    fun MedicationTask(description: String, state: Boolean, onToggle: (Boolean) -> Unit) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = state,
+                onCheckedChange = { newState ->
+                    onToggle(newState)
+                    saveMedicationData()
+                }
+            )
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -222,12 +284,28 @@ fun MedicationScreen() {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        item { MedicationTask("No lactose and calcium after 18:00", doxyLactose) { doxyLactose = it } }
-        item { MedicationTask("Last major meal before 18:00", doxyMeal) { doxyMeal = it } }
-        item { MedicationTask("Dose of 200 mg around 22:00", doxyDose) { doxyDose = it } }
-        item { MedicationTask("100 ml water to absorb", doxyWater) { doxyWater = it } }
+        item {
+            MedicationTask("No lactose and calcium after 18:00", doxyLactose) {
+                doxyLactose = it
+            }
+        }
+        item {
+            MedicationTask("Last major meal before 18:00", doxyMeal) {
+                doxyMeal = it
+            }
+        }
+        item {
+            MedicationTask("Dose of 200 mg around 22:00", doxyDose) {
+                doxyDose = it
+            }
+        }
+        item {
+            MedicationTask("100 ml water to absorb", doxyWater) {
+                doxyWater = it
+            }
+        }
 
-        // Spacer wrapped in item
+        // Spacer
         item {
             Spacer(Modifier.height(16.dp))
         }
@@ -240,10 +318,18 @@ fun MedicationScreen() {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        item { MedicationTask("Dose of 4 mg morning", prednisoneDose) { prednisoneDose = it } }
-        item { MedicationTask("Ingested 5 minutes after meal", prednisoneMeal) { prednisoneMeal = it } }
+        item {
+            MedicationTask("Dose of 4 mg morning", prednisoneDose) {
+                prednisoneDose = it
+            }
+        }
+        item {
+            MedicationTask("Ingested 5 minutes after meal", prednisoneMeal) {
+                prednisoneMeal = it
+            }
+        }
 
-        // Spacer wrapped in item
+        // Spacer
         item {
             Spacer(Modifier.height(16.dp))
         }
@@ -256,9 +342,13 @@ fun MedicationScreen() {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        item { MedicationTask("Dose of 100/50/1 mg morning", vitamins) { vitamins = it } }
+        item {
+            MedicationTask("Dose of 100/50/1 mg morning", vitamins) {
+                vitamins = it
+            }
+        }
 
-        // Spacer wrapped in item
+        // Spacer
         item {
             Spacer(Modifier.height(16.dp))
         }
@@ -271,10 +361,18 @@ fun MedicationScreen() {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
-        item { MedicationTask("Morning dose", probioticsMorning) { probioticsMorning = it } }
-        item { MedicationTask("Evening dose", probioticsEvening) { probioticsEvening = it } }
+        item {
+            MedicationTask("Morning dose", probioticsMorning) {
+                probioticsMorning = it
+            }
+        }
+        item {
+            MedicationTask("Evening dose", probioticsEvening) {
+                probioticsEvening = it
+            }
+        }
 
-        // Spacer wrapped in item
+        // Spacer
         item {
             Spacer(Modifier.height(16.dp))
         }
@@ -290,7 +388,10 @@ fun MedicationScreen() {
         item {
             TextField(
                 value = sideEffects,
-                onValueChange = { sideEffects = it },
+                onValueChange = {
+                    sideEffects = it
+                    saveMedicationData()
+                },
                 placeholder = { Text("Enter any side effects here...") },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -299,55 +400,20 @@ fun MedicationScreen() {
             // Submit button
             Button(
                 onClick = {
-                    // Create MedicationData object
-                    val data = MedicationData(
-                        timestamp = currentDate,
-                        doxyLactose = doxyLactose,
-                        doxyMeal = doxyMeal,
-                        doxyDose = doxyDose,
-                        doxyWater = doxyWater,
-                        prednisoneDose = prednisoneDose,
-                        prednisoneMeal = prednisoneMeal,
-                        vitamins = vitamins,
-                        probioticsMorning = probioticsMorning,
-                        probioticsEvening = probioticsEvening,
-                        sideEffects = sideEffects
-                    )
-                    // Insert into SQLite
-                    val dbHelper = MedicationDatabaseHelper(context)  // Initialize your database helper
-                    dbHelper.insertMedicationData(data)
-
                     // Show toast
-                    Toast.makeText(context, "Medication data added and exported", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Medication data exported", Toast.LENGTH_SHORT).show()
 
                     // Save to CSV
                     dbHelper.exportToCSV(context)
                 },
                 modifier = Modifier.fillMaxWidth().padding(16.dp) // Add padding as needed
             ) {
-                Text("Submit")
+                Text("Export to CSV")
             }
         }
     }
 }
 
-@Composable
-fun MedicationTask(task: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 8.dp)
-    ) {
-        Checkbox(
-            checked = checked,
-            onCheckedChange = onCheckedChange
-        )
-        Text(
-            text = task,
-            modifier = Modifier.padding(start = 8.dp),
-            style = MaterialTheme.typography.bodyMedium
-        )
-    }
-}
 
 @Composable
 fun MedicationTrackingScreen() {
