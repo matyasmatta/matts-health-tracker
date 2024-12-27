@@ -26,6 +26,7 @@ class MedicationDatabaseHelper(context: Context) :
         const val COLUMN_DOXY_MEAL = "doxy_meal"
         const val COLUMN_DOXY_DOSE = "doxy_dose"
         const val COLUMN_DOXY_WATER = "doxy_water"
+        const val COLUMN_DOXY_DOSAGE = "doxy_mg"
         const val COLUMN_PREDNISONE_DOSE = "prednisone_dose"
         const val COLUMN_PREDNISONE_MEAL = "prednisone_meal"
         const val COLUMN_VITAMINS = "vitamins"
@@ -47,11 +48,13 @@ class MedicationDatabaseHelper(context: Context) :
                 $COLUMN_VITAMINS INTEGER,
                 $COLUMN_PROBIOTICS_MORNING INTEGER,
                 $COLUMN_PROBIOTICS_EVENING INTEGER,
-                $COLUMN_SIDE_EFFECTS TEXT
+                $COLUMN_SIDE_EFFECTS TEXT,
+                $COLUMN_DOXY_DOSAGE INTEGER
             )
         """
         db?.execSQL(CREATE_TABLE)
     }
+
 
     override fun onUpgrade(db: SQLiteDatabase?, oldVersion: Int, newVersion: Int) {
         db?.execSQL("DROP TABLE IF EXISTS $TABLE_NAME")
@@ -76,6 +79,7 @@ class MedicationDatabaseHelper(context: Context) :
         values.put(COLUMN_PROBIOTICS_MORNING, if (data.probioticsMorning) 1 else 0)
         values.put(COLUMN_PROBIOTICS_EVENING, if (data.probioticsEvening) 1 else 0)
         values.put(COLUMN_SIDE_EFFECTS, data.sideEffects)
+        values.put(COLUMN_DOXY_DOSAGE, data.doxyDosage) // new field
 
         // Try to insert a new row or update the existing one for today
         val rowsUpdated = db.update(TABLE_NAME, values, "$COLUMN_DATE = ?", arrayOf(data.currentDate))
@@ -114,6 +118,7 @@ class MedicationDatabaseHelper(context: Context) :
             val probioticsMorningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_MORNING)
             val probioticsEveningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_EVENING)
             val sideEffectsIndex = cursor.getColumnIndexOrThrow(COLUMN_SIDE_EFFECTS)
+            val doxyDosageIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_DOSAGE) // new field
 
             data = MedicationData(
                 currentDate = cursor.getString(dateIndex),
@@ -126,7 +131,8 @@ class MedicationDatabaseHelper(context: Context) :
                 vitamins = cursor.getInt(vitaminsIndex) == 1,
                 probioticsMorning = cursor.getInt(probioticsMorningIndex) == 1,
                 probioticsEvening = cursor.getInt(probioticsEveningIndex) == 1,
-                sideEffects = cursor.getString(sideEffectsIndex)
+                sideEffects = cursor.getString(sideEffectsIndex),
+                doxyDosage = cursor.getInt(doxyDosageIndex) // new field
             )
         }
 
@@ -141,7 +147,6 @@ class MedicationDatabaseHelper(context: Context) :
         val db = readableDatabase
         val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         Log.d("MedicationDatabaseHelper", "Fetching today's $currentDate data on launch.")
-
 
         val cursor: Cursor = db.query(
             TABLE_NAME,
@@ -166,6 +171,7 @@ class MedicationDatabaseHelper(context: Context) :
             val probioticsMorningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_MORNING)
             val probioticsEveningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_EVENING)
             val sideEffectsIndex = cursor.getColumnIndexOrThrow(COLUMN_SIDE_EFFECTS)
+            val doxyDosageIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_DOSAGE) // new field
 
             data = MedicationData(
                 currentDate = cursor.getString(dateIndex),
@@ -178,16 +184,17 @@ class MedicationDatabaseHelper(context: Context) :
                 vitamins = cursor.getInt(vitaminsIndex) == 1,
                 probioticsMorning = cursor.getInt(probioticsMorningIndex) == 1,
                 probioticsEvening = cursor.getInt(probioticsEveningIndex) == 1,
-                sideEffects = cursor.getString(sideEffectsIndex)
+                sideEffects = cursor.getString(sideEffectsIndex),
+                doxyDosage = cursor.getInt(doxyDosageIndex) // new field
             )
         }
 
         cursor.close()
         db.close()
-        Log.d("MedicationDatabaseHelper", "Fetched today's data: $data")
         return data
     }
 
+    // Export data to a CSV file
     // Export data to a CSV file
     fun exportToCSV(context: Context) {
         val data = fetchAllMedicationData()
@@ -197,13 +204,13 @@ class MedicationDatabaseHelper(context: Context) :
             val writer = BufferedWriter(FileWriter(csvFile))
 
             // Write header
-            writer.write("Date,Doxy Lactose,Doxy Meal,Doxy Dose,Doxy Water,Prednisone Dose,Prednisone Meal,Vitamins,Probiotics Morning,Probiotics Evening,Side Effects\n")
+            writer.write("Date,Doxy Lactose,Doxy Meal,Doxy Dose,Doxy Dosage,Doxy Water,Prednisone Dose,Prednisone Meal,Vitamins,Probiotics Morning,Probiotics Evening,Side Effects\n")
 
             // Write data
             for (entry in data) {
                 // Wrap the side effects column in quotes to handle commas or special characters
                 val sanitizedSideEffects = "\"${entry.sideEffects.replace("\"", "\"\"")}\""
-                writer.write("${entry.currentDate},${entry.doxyLactose},${entry.doxyMeal},${entry.doxyDose},${entry.doxyWater},${entry.prednisoneDose},${entry.prednisoneMeal},${entry.vitamins},${entry.probioticsMorning},${entry.probioticsEvening},$sanitizedSideEffects\n")
+                writer.write("${entry.currentDate},${entry.doxyLactose},${entry.doxyMeal},${entry.doxyDose},${entry.doxyDosage},${entry.doxyWater},${entry.prednisoneDose},${entry.prednisoneMeal},${entry.vitamins},${entry.probioticsMorning},${entry.probioticsEvening},$sanitizedSideEffects\n")
             }
 
             writer.close()
@@ -216,7 +223,7 @@ class MedicationDatabaseHelper(context: Context) :
     // Fetch all medication data from the database
     private fun fetchAllMedicationData(): List<MedicationData> {
         val db = readableDatabase
-        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, null)
+        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, null,"$COLUMN_DATE ASC")
 
         val data = mutableListOf<MedicationData>()
 
@@ -226,6 +233,7 @@ class MedicationDatabaseHelper(context: Context) :
                 val doxyLactoseIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_LACTOSE)
                 val doxyMealIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_MEAL)
                 val doxyDoseIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_DOSE)
+                val doxyDosageIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_DOSAGE) // Add this for doxyDosage
                 val doxyWaterIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_WATER)
                 val prednisoneDoseIndex = cursor.getColumnIndexOrThrow(COLUMN_PREDNISONE_DOSE)
                 val prednisoneMealIndex = cursor.getColumnIndexOrThrow(COLUMN_PREDNISONE_MEAL)
@@ -238,7 +246,8 @@ class MedicationDatabaseHelper(context: Context) :
                     currentDate = cursor.getString(dateIndex),
                     doxyLactose = cursor.getInt(doxyLactoseIndex) == 1,
                     doxyMeal = cursor.getInt(doxyMealIndex) == 1,
-                    doxyDose = cursor.getInt(doxyDoseIndex) == 1,
+                    doxyDose = cursor.getInt(doxyDoseIndex) == 1, // toggle for doxyDose
+                    doxyDosage = cursor.getInt(doxyDosageIndex), // integer for doxyDosage
                     doxyWater = cursor.getInt(doxyWaterIndex) == 1,
                     prednisoneDose = cursor.getInt(prednisoneDoseIndex) == 1,
                     prednisoneMeal = cursor.getInt(prednisoneMealIndex) == 1,

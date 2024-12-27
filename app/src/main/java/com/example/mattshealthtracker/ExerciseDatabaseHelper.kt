@@ -13,6 +13,7 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import com.example.mattshealthtracker.AppGlobals
+import com.example.mattshealthtracker.MedicationDatabaseHelper.Companion.COLUMN_DATE
 
 class ExerciseDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
@@ -136,7 +137,7 @@ class ExerciseDatabaseHelper(context: Context) :
     // Fetch all data from the database
     fun fetchAllData(): List<ExerciseData> {
         val db = readableDatabase
-        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, null)
+        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, "$COLUMN_TIMESTAMP ASC")
 
         val data = mutableListOf<ExerciseData>()
 

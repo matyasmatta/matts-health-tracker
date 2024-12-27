@@ -150,7 +150,15 @@ class HealthDatabaseHelper(context: Context) :
     // Fetch all data from the database
     fun fetchAllData(): List<HealthData> {
         val db = readableDatabase
-        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, null)
+        val cursor: Cursor = db.query(
+            TABLE_NAME,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "$COLUMN_DATE ASC"  // Sort in ascending order
+        )
 
         val data = mutableListOf<HealthData>()
 

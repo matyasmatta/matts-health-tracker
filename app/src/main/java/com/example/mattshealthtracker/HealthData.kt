@@ -24,7 +24,8 @@ data class MedicationData(
     val vitamins: Boolean,
     val probioticsMorning: Boolean,
     val probioticsEvening: Boolean,
-    val sideEffects: String
+    val sideEffects: String,
+    val doxyDosage: Int
 )
 
 data class ExerciseData (

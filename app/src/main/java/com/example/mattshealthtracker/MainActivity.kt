@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontWeight
 import java.time.LocalDate
 import kotlin.collections.get
 import kotlin.div
@@ -56,9 +57,9 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
-    object AddData : BottomNavItem("add_data", "Add Data", Icons.Default.Add)
+    object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.Add)
     object Exercises : BottomNavItem("exercises", "Exercises", Icons.Default.Refresh) // New tab
-    object MedicationTracking : BottomNavItem("medication_tracking", "Medication", Icons.Default.Check) // New Screen
+    object MedicationTracking : BottomNavItem("medication_tracking", "Medications", Icons.Default.Check) // New Screen
 }
 
 @Composable
@@ -154,6 +155,8 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
     var isDatePickerVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val currentDay = AppGlobals.currentDay // Get current day from AppGlobals
+    val today = AppGlobals.getCurrentDayAsLocalDate().toString()
+    val yesterday = AppGlobals.getCurrentDayAsLocalDate().minusDays(1).toString()
 
     // State to show Toast message
     var showToast by remember { mutableStateOf(false) }
@@ -205,9 +208,14 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
             Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
         }
 
+        // Show "Yesterday" or "Today" if the opened day matches those days
         Text(
-            text = openedDay,
-            style = MaterialTheme.typography.bodyLarge,
+            text = when (openedDay) {
+                yesterday -> "Yesterday"
+                today -> "Today"
+                else -> openedDay
+            },
+            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
             modifier = Modifier
                 .clickable {
                     isDatePickerVisible = true
@@ -235,7 +243,6 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
         }
     }
 }
-
 
 @Composable
 fun ExercisesScreen(openedDay: String) {
@@ -266,6 +273,7 @@ fun ExercisesScreen(openedDay: String) {
             )
         )
         Log.d("ExercisesScreen", "Updated exercise data: Pushups=$pushUps, Posture=$postureCorrections")
+        dbhelper.exportToCSV(context)
     }
 
     Log.d("ExercisesScreen", "Recomposing for openedDay=$openedDay, Pushups=$pushUps, Posture=$postureCorrections")
@@ -276,7 +284,7 @@ fun ExercisesScreen(openedDay: String) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Exercise Tracker", style = MaterialTheme.typography.headlineMedium)
+        // Text("Exercise Tracker", style = MaterialTheme.typography.titleLarge)
 
         ExerciseCounter(
             label = "Push-Ups",
@@ -307,16 +315,6 @@ fun ExercisesScreen(openedDay: String) {
                 }
             }
         )
-
-        Button(
-            onClick = {
-                dbhelper.exportToCSV(context)
-                Toast.makeText(context, "Data exported successfully!", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Export to CSV")
-        }
     }
 }
 
@@ -359,27 +357,29 @@ fun MedicationScreen(openedDay: String) {
         currentDate = openedDay,
         doxyLactose = false,
         doxyMeal = false,
-        doxyDose = false,
+        doxyDose = false, // boolean for doxycycline dose
         doxyWater = false,
         prednisoneDose = false,
         prednisoneMeal = false,
         vitamins = false,
         probioticsMorning = false,
         probioticsEvening = false,
-        sideEffects = ""
+        sideEffects = "",
+        doxyDosage = 200 // default integer dosage for doxycycline
     )
 
     // Medication state
-    var doxyLactose by remember { mutableStateOf(medicationData?.doxyLactose ?: false) }
-    var doxyMeal by remember { mutableStateOf(medicationData?.doxyMeal ?: false) }
-    var doxyDose by remember { mutableStateOf(medicationData?.doxyDose ?: false) }
-    var doxyWater by remember { mutableStateOf(medicationData?.doxyWater ?: false) }
-    var prednisoneDose by remember { mutableStateOf(medicationData?.prednisoneDose ?: false) }
-    var prednisoneMeal by remember { mutableStateOf(medicationData?.prednisoneMeal ?: false) }
-    var vitamins by remember { mutableStateOf(medicationData?.vitamins ?: false) }
-    var probioticsMorning by remember { mutableStateOf(medicationData?.probioticsMorning ?: false) }
-    var probioticsEvening by remember { mutableStateOf(medicationData?.probioticsEvening ?: false) }
-    var sideEffects by remember { mutableStateOf(medicationData?.sideEffects ?: "") }
+    var doxyLactose by remember { mutableStateOf(medicationData.doxyLactose) }
+    var doxyMeal by remember { mutableStateOf(medicationData.doxyMeal) }
+    var doxyDose by remember { mutableStateOf(medicationData.doxyDose) }
+    var doxyWater by remember { mutableStateOf(medicationData.doxyWater) }
+    var prednisoneDose by remember { mutableStateOf(medicationData.prednisoneDose) }
+    var prednisoneMeal by remember { mutableStateOf(medicationData.prednisoneMeal) }
+    var vitamins by remember { mutableStateOf(medicationData.vitamins) }
+    var probioticsMorning by remember { mutableStateOf(medicationData.probioticsMorning) }
+    var probioticsEvening by remember { mutableStateOf(medicationData.probioticsEvening) }
+    var sideEffects by remember { mutableStateOf(medicationData.sideEffects) }
+    var doxyDosage by remember { mutableStateOf(medicationData.doxyDosage) }
 
     LaunchedEffect(medicationData) {
         medicationData?.let {
@@ -393,6 +393,7 @@ fun MedicationScreen(openedDay: String) {
             probioticsMorning = it.probioticsMorning
             probioticsEvening = it.probioticsEvening
             sideEffects = it.sideEffects
+            doxyDosage = it.doxyDosage
         }
     }
 
@@ -410,8 +411,10 @@ fun MedicationScreen(openedDay: String) {
             vitamins = vitamins,
             probioticsMorning = probioticsMorning,
             probioticsEvening = probioticsEvening,
-            sideEffects = sideEffects
+            sideEffects = sideEffects,
+            doxyDosage = doxyDosage
         ))
+        dbHelper.exportToCSV(context)
     }
 
     // Define a Composable for Medication Tasks
@@ -433,24 +436,53 @@ fun MedicationScreen(openedDay: String) {
         }
     }
 
+    // Define a Composable for Doxycycline Dosage Counter
+    @Composable
+    fun DoxycyclineDosageCounter(
+        label: String,
+        count: Int,
+        onIncrement: () -> Unit,
+        onDecrement: () -> Unit
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDecrement) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Minus One")
+                }
+                Text("$count mg", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 8.dp))
+                IconButton(onClick = onIncrement) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "Plus One")
+                }
+            }
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        item {
+        /*item {
             Text(
                 text = "Medications",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
-        }
+        }*/
 
         // Medication: Doxycycline
         item {
             Text(
                 text = "Doxycycline",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
@@ -465,7 +497,7 @@ fun MedicationScreen(openedDay: String) {
             }
         }
         item {
-            MedicationTask("Dose of 200 mg around 22:00", doxyDose) {
+            MedicationTask("Dose around 22:00", doxyDose) {
                 doxyDose = it
             }
         }
@@ -474,17 +506,25 @@ fun MedicationScreen(openedDay: String) {
                 doxyWater = it
             }
         }
+        item {
+            DoxycyclineDosageCounter(
+                label = "Daily dosage",
+                count = doxyDosage,
+                onIncrement = { doxyDosage += 50 },
+                onDecrement = { if (doxyDosage > 50) doxyDosage -= 50 }
+            )
+        }
 
         // Spacer
         item {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(40.dp))
         }
 
         // Medication: Methylprednisolone
         item {
             Text(
                 text = "Methylprednisolone",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
@@ -501,14 +541,14 @@ fun MedicationScreen(openedDay: String) {
 
         // Spacer
         item {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(40.dp))
         }
 
         // Medication: B-vitamin complex
         item {
             Text(
                 text = "B-vitamin complex",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
@@ -520,14 +560,14 @@ fun MedicationScreen(openedDay: String) {
 
         // Spacer
         item {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(40.dp))
         }
 
         // Medication: Probiotics
         item {
             Text(
                 text = "Probiotics",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
         }
@@ -544,7 +584,7 @@ fun MedicationScreen(openedDay: String) {
 
         // Spacer
         item {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(40.dp))
         }
 
         // Section: Side effects
@@ -566,26 +606,12 @@ fun MedicationScreen(openedDay: String) {
                 modifier = Modifier.fillMaxWidth()
             )
         }
+        // Spacer
         item {
-            // Submit button
-            Button(
-                onClick = {
-                    // Show toast
-                    Toast.makeText(context, "Medication data exported", Toast.LENGTH_SHORT).show()
-
-                    // Save to CSV
-                    dbHelper.exportToCSV(context)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp) // Add padding as needed
-            ) {
-                Text("Export to CSV")
-            }
+            Spacer(Modifier.height(40.dp))
         }
     }
 }
-
 
 @Composable
 fun MedicationTrackingScreen() {
@@ -728,6 +754,7 @@ fun HealthTrackerScreen(openedDay: String) {
         )
         dbHelper.insertOrUpdateHealthData(updatedHealthData)
         healthData = updatedHealthData // Update healthData state
+        dbHelper.exportToCSV(context)
     }
 
     // LaunchedEffect to update healthData when openedDay changes
@@ -770,7 +797,7 @@ fun HealthTrackerScreen(openedDay: String) {
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Symptoms section
-        Text("Symptoms", style = MaterialTheme.typography.headlineMedium)
+        Text("Symptoms", style = MaterialTheme.typography.titleLarge)
         SymptomSliderGroup(
             items = symptomLabels.zip(symptomValues),
             onValuesChange = { updatedValues ->
@@ -781,7 +808,7 @@ fun HealthTrackerScreen(openedDay: String) {
         Spacer(modifier = Modifier.height(16.dp))
 
         // Externals section
-        Text("Externals", style = MaterialTheme.typography.headlineMedium)
+        Text("Externals", style = MaterialTheme.typography.titleLarge)
         ExternalSliderGroup(
             items = externalLabels.zip(externalValues),
             onValuesChange = { updatedValues ->
@@ -792,7 +819,7 @@ fun HealthTrackerScreen(openedDay: String) {
         Spacer(modifier = Modifier.height(16.dp))
 
         // Mental Health section
-        Text("Mental Health", style = MaterialTheme.typography.headlineMedium)
+        Text("Mental Health", style = MaterialTheme.typography.titleLarge)
         MentalSliderGroup(
             items = mentalLabels.zip(mentalValues),
             onValuesChange = { updatedValues ->
@@ -803,22 +830,13 @@ fun HealthTrackerScreen(openedDay: String) {
         Spacer(modifier = Modifier.height(16.dp))
 
         // Notes section
-        Text("Notes", style = MaterialTheme.typography.headlineMedium)
+        Text("Notes", style = MaterialTheme.typography.titleLarge)
         TextInputField(
             text = notes,
             onTextChange = { newText -> notes = newText }
         )
 
-        // Submit button
-        Button(
-            onClick = {
-                dbHelper.exportToCSV(context)
-                Toast.makeText(context, "Data exported successfully", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        ) {
-            Text("Export to CSV")
-        }
+        Spacer(modifier = Modifier.height(10.dp))
     }
 }
 
