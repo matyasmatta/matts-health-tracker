@@ -10,6 +10,7 @@ import java.io.File
 import java.io.BufferedWriter
 import java.io.FileWriter
 import java.io.IOException
+import com.example.mattshealthtracker.AppGlobals
 
 class HealthDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {

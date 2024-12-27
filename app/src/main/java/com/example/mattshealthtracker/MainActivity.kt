@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import android.content.Context
 import androidx.compose.material.icons.filled.Delete
 import com.example.mattshealthtracker.ui.theme.MattsHealthTrackerTheme
+import com.example.mattshealthtracker.AppGlobals
 import android.util.Log
 
 class MainActivity : ComponentActivity() {
@@ -90,7 +91,7 @@ fun ExercisesScreen() {
     val editor = preferences.edit()
 
     // Fetch today's data from the database
-    val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    val currentDate = AppGlobals.currentDay
     val exerciseData = dbhelper.fetchExerciseDataForToday()
 
     // Initialize counters with fetched values or default to 0

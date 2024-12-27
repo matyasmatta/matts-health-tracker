@@ -12,6 +12,7 @@ import java.io.FileWriter
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import com.example.mattshealthtracker.AppGlobals
 
 class ExerciseDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
@@ -48,7 +49,7 @@ class ExerciseDatabaseHelper(context: Context) :
     // Insert data into the database
     fun insertOrUpdateData(data: ExerciseData) {
         val db = writableDatabase
-        val currentDay = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val currentDay = AppGlobals.currentDay
 
         // Check if an entry for the current day exists
         val cursor = db.query(
@@ -98,7 +99,7 @@ class ExerciseDatabaseHelper(context: Context) :
     // Fetch data for today's date
     fun fetchExerciseDataForToday(): ExerciseData? {
         val db = readableDatabase
-        val todayDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val todayDate = AppGlobals.currentDay
         val query = "SELECT * FROM $TABLE_NAME WHERE DATE($COLUMN_TIMESTAMP) = ?"
         val cursor = db.rawQuery(query, arrayOf(todayDate))
 
