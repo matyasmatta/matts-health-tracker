@@ -49,21 +49,21 @@ class ExerciseDatabaseHelper(context: Context) :
     // Insert data into the database
     fun insertOrUpdateData(data: ExerciseData) {
         val db = writableDatabase
-        val currentDay = AppGlobals.currentDay
+        val date = AppGlobals.openedDay
 
         // Check if an entry for the current day exists
         val cursor = db.query(
             TABLE_NAME,
             null,
             "$COLUMN_TIMESTAMP = ?",
-            arrayOf(currentDay),
+            arrayOf(date),
             null,
             null,
             null
         )
 
         val values = ContentValues().apply {
-            put(COLUMN_TIMESTAMP, currentDay)
+            put(COLUMN_TIMESTAMP, date)
             put(COLUMN_PUSHUP, data.pushups)
             put(COLUMN_POSTURE, data.posture)
         }
@@ -74,7 +74,7 @@ class ExerciseDatabaseHelper(context: Context) :
                 TABLE_NAME,
                 values,
                 "$COLUMN_TIMESTAMP = ?",
-                arrayOf(currentDay)
+                arrayOf(date)
             )
             if (result == -1) {
                 Log.e("DatabaseError", "Error updating data")
@@ -108,6 +108,24 @@ class ExerciseDatabaseHelper(context: Context) :
             val pushups = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_PUSHUP))
             val posture = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_POSTURE))
             data = ExerciseData(currentDate = todayDate, pushups = pushups, posture = posture)
+        }
+
+        cursor.close()
+        db.close()
+        return data
+    }
+
+    // Fetch data for any other specific date
+    fun fetchExerciseDataForDate(date: String): ExerciseData? {
+        val db = readableDatabase
+        val query = "SELECT * FROM $TABLE_NAME WHERE DATE($COLUMN_TIMESTAMP) = ?"
+        val cursor = db.rawQuery(query, arrayOf(date))
+
+        var data: ExerciseData? = null
+        if (cursor.moveToFirst()) {
+            val pushups = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_PUSHUP))
+            val posture = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_POSTURE))
+            data = ExerciseData(currentDate = date, pushups = pushups, posture = posture)
         }
 
         cursor.close()

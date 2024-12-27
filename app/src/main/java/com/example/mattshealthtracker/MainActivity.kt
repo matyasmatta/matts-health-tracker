@@ -91,8 +91,7 @@ fun ExercisesScreen() {
     val editor = preferences.edit()
 
     // Fetch today's data from the database
-    val currentDate = AppGlobals.currentDay
-    val exerciseData = dbhelper.fetchExerciseDataForToday()
+    val exerciseData = dbhelper.fetchExerciseDataForDate(AppGlobals.openedDay)
 
     // Initialize counters with fetched values or default to 0
     var pushUps by remember { mutableStateOf(exerciseData?.pushups ?: 0) }
@@ -104,7 +103,7 @@ fun ExercisesScreen() {
     fun updateData() {
         dbhelper.insertOrUpdateData(
             ExerciseData(
-                currentDate = currentDate,
+                currentDate = AppGlobals.openedDay,
                 pushups = pushUps,
                 posture = postureCorrections
             )
