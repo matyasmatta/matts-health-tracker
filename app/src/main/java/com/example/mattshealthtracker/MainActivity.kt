@@ -31,15 +31,13 @@ import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import com.google.android.material.datepicker.MaterialDatePicker
-import java.text.DateFormat
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import android.app.Activity
-import androidx.fragment.app.FragmentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import java.time.LocalDate
+import kotlin.div
+import kotlin.times
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,13 +105,85 @@ fun HealthTrackerApp() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
+fun CustomDatePickerDialog(
+    onDateSelected: (LocalDate) -> Unit,
+    onDismissRequest: () -> Unit
+) {
+    val datePickerState = rememberDatePickerState()
+    var selectedDateMillis by remember { mutableLongStateOf(AppGlobals.getOpenedDayAsLocalDate().toEpochDay() * 86400000) }
+
+    // Update selectedDateMillis when datePickerState.selectedDateMillis changes
+    LaunchedEffect(datePickerState.selectedDateMillis) {
+        if (datePickerState.selectedDateMillis != null) {
+            selectedDateMillis = datePickerState.selectedDateMillis!!
+        }
+    }
+
+    DatePickerDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            Button(onClick = {
+                onDateSelected(LocalDate.ofEpochDay(selectedDateMillis / 86400000))
+                onDismissRequest()
+            }) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismissRequest) {
+                Text("Cancel")
+            }
+        }
+    ) {
+        DatePicker(
+            state = datePickerState, // Use datePickerState directly
+            title = { Text("Select Date") },
+            modifier = Modifier.padding(16.dp),
+            colors = DatePickerDefaults.colors()
+        )
+        // Trailing lambda removed
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
     var isDatePickerVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val currentDay = AppGlobals.currentDay // Get current day from AppGlobals
 
+    // State to show Toast message
+    var showToast by remember { mutableStateOf(false) }
+
     Log.d("DateNavigation", "Recomposing DateNavigationBar: $openedDay")
+
+    if (isDatePickerVisible) {
+        // Show DatePickerDialog in a Composable context
+        LaunchedEffect(Unit) {
+            isDatePickerVisible = true // Trigger the dialog to show
+        }
+        CustomDatePickerDialog(
+            onDateSelected = { selectedDate ->
+                // Protection against future dates
+                if (selectedDate <= AppGlobals.getCurrentDayAsLocalDate()) {
+                    onDateChange(selectedDate.toString())
+                } else {
+                    // Set showToast to true to trigger the Toast message
+                    showToast = true
+                }
+            },
+            onDismissRequest = { isDatePickerVisible = false }
+        )
+    }
+
+    // Show Toast message if showToast is true
+    if (showToast) {
+        Toast.makeText(context, "Cannot select a future date!", Toast.LENGTH_SHORT).show()
+        // Reset showToast to false after showing the Toast
+        showToast = false
+    }
 
     Row(
         modifier = Modifier

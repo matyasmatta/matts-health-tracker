@@ -57,5 +57,6 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation(libs.android.material)
+    implementation("androidx.compose.material3:material3-android:1.3.1")
 
 }
