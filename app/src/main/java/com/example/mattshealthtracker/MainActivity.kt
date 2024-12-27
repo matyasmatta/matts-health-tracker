@@ -63,94 +63,11 @@ sealed class BottomNavItem(val route: String, val label: String, val icon: Image
 }
 
 @Composable
-fun DateNavigationBar() {
-    val context = LocalContext.current
-    var isDatePickerVisible by remember { mutableStateOf(false) }
-
-    // Use mutable state for openedDay inside the composable to trigger recomposition
-    var openedDay by remember { mutableStateOf(AppGlobals.openedDay) }
-
-    // Log when recomposing
-    Log.d("DateNavigation", "Recomposing DateNavigationBar: $openedDay")
-
-    // Update formatted date when openedDay changes
-    val formattedDate = remember(openedDay) {
-        openedDay // Use the mutable state to update the displayed date
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        // Previous Day Button
-        IconButton(
-            onClick = {
-                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
-                val previousDay = currentDate.minusDays(1)
-                AppGlobals.setOpenedDayFromLocalDate(previousDay) // Update global state
-                openedDay = AppGlobals.openedDay // Update local state
-                Log.d("DateNavigation", "Changed to previous day: $openedDay")
-            }
-        ) {
-            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
-        }
-
-        // Date Text, clickable to open date picker
-        Text(
-            text = formattedDate,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier
-                .clickable {
-                    isDatePickerVisible = true // Open the date picker
-                    Log.d("DateNavigation", "Opening Date Picker")
-                }
-                .padding(8.dp)
-        )
-
-        // Next Day Button
-        IconButton(
-            onClick = {
-                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
-                val nextDay = currentDate.plusDays(1)
-                AppGlobals.setOpenedDayFromLocalDate(nextDay) // Update global state
-                openedDay = AppGlobals.openedDay // Update local state
-                Log.d("DateNavigation", "Changed to next day: $openedDay")
-            }
-        ) {
-            Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next Day")
-        }
-    }
-
-    // Date Picker logic
-    if (isDatePickerVisible) {
-        val picker = MaterialDatePicker.Builder.datePicker().build()
-
-        picker.addOnPositiveButtonClickListener { timestamp ->
-            val selectedDate = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
-            AppGlobals.setOpenedDayFromLocalDate(selectedDate) // Update global state
-            openedDay = AppGlobals.openedDay // Sync local state with global state
-            Log.d("DateNavigation", "Selected new date: $openedDay")
-        }
-
-        val activity = context as? FragmentActivity
-        activity?.let {
-            picker.show(it.supportFragmentManager, "DATE_PICKER")
-        }
-
-        // Set picker visibility to false after it is opened
-        isDatePickerVisible = false
-    }
-}
-
-
-@Composable
 fun HealthTrackerApp() {
     var currentScreen by remember { mutableStateOf<BottomNavItem>(BottomNavItem.AddData) }
+    var openedDay by remember { mutableStateOf(AppGlobals.openedDay) } // Single source of truth for openedDay
 
-    Log.d("HealthTrackerApp", "Recomposing HealthTrackerApp")
+    Log.d("HealthTrackerApp", "Recomposing HealthTrackerApp: openedDay=$openedDay")
 
     Scaffold(
         bottomBar = {
@@ -174,11 +91,15 @@ fun HealthTrackerApp() {
         }
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding)) {
-            DateNavigationBar() // Add the new navigation bar here.
+            DateNavigationBar(openedDay, onDateChange = { newDate ->
+                openedDay = newDate
+                AppGlobals.openedDay = newDate // Update the global helper for consistency
+            })
+
             Box(modifier = Modifier.fillMaxSize()) {
                 when (currentScreen) {
                     is BottomNavItem.AddData -> HealthTrackerScreen()
-                    is BottomNavItem.Exercises -> ExercisesScreen()
+                    is BottomNavItem.Exercises -> ExercisesScreen(openedDay) // Pass openedDay to the screen
                     is BottomNavItem.MedicationTracking -> MedicationScreen()
                 }
             }
@@ -187,48 +108,96 @@ fun HealthTrackerApp() {
 }
 
 @Composable
-fun ExercisesScreen() {
+fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
+    var isDatePickerVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    // Log recomposition of ExercisesScreen
-    Log.d("ExercisesScreen", "Recomposing ExercisesScreen")
+    val currentDay = AppGlobals.currentDay // Get current day from AppGlobals
 
-    // Manage database lifecycle properly
+    Log.d("DateNavigation", "Recomposing DateNavigationBar: $openedDay")
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        IconButton(
+            onClick = {
+                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
+                val previousDay = currentDate.minusDays(1)
+                val newDate = previousDay.toString()
+                onDateChange(newDate) // Notify parent of the change
+                Log.d("DateNavigation", "Changed to previous day: $newDate")
+            }
+        ) {
+            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
+        }
+
+        Text(
+            text = openedDay,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier
+                .clickable {
+                    isDatePickerVisible = true
+                }
+                .padding(8.dp)
+        )
+
+        IconButton(
+            onClick = {
+                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
+                val nextDay = currentDate.plusDays(1)
+
+                // Only allow moving to `nextDay` if it's not beyond `currentDay`
+                if (nextDay <= AppGlobals.getCurrentDayAsLocalDate()) {
+                    val newDate = nextDay.toString()
+                    onDateChange(newDate) // Notify parent of the change
+                    Log.d("DateNavigation", "Changed to next day: $newDate")
+                } else {
+                    Log.d("DateNavigation", "Cannot go beyond currentDay: $currentDay")
+                    Toast.makeText(context, "Cannot go beyond today!", Toast.LENGTH_SHORT).show()
+                }
+            }
+        ) {
+            Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next Day")
+        }
+    }
+}
+
+
+@Composable
+fun ExercisesScreen(openedDay: String) {
+    val context = LocalContext.current
     val dbhelper = remember { ExerciseDatabaseHelper(context) }
     DisposableEffect(Unit) {
-        onDispose { dbhelper.close() } // Close the database when composable is disposed
+        onDispose { dbhelper.close() }
     }
 
-    val preferences = context.getSharedPreferences("exercise_tracker", Context.MODE_PRIVATE)
-    val editor = preferences.edit()
-
-    // Fetch today's data from the database
-    val exerciseData = dbhelper.fetchExerciseDataForDate(AppGlobals.openedDay) ?: ExerciseData(
-        currentDate = AppGlobals.openedDay,
+    // Fetch data dynamically whenever `openedDay` changes
+    val exerciseData = dbhelper.fetchExerciseDataForDate(openedDay) ?: ExerciseData(
+        currentDate = openedDay,
         pushups = 0,
         posture = 0
     )
 
-    // Initialize counters with fetched values
-    var pushUps by remember { mutableStateOf(exerciseData.pushups) }
-    var postureCorrections by remember { mutableStateOf(exerciseData.posture) }
+    // Store state for counters, initialized with `exerciseData`
+    var pushUps by remember(openedDay) { mutableStateOf(exerciseData.pushups) }
+    var postureCorrections by remember(openedDay) { mutableStateOf(exerciseData.posture) }
 
-    // Log the exercise data to check if it is updating
-    Log.d("ExercisesScreen", "Fetched exercise data: Pushups=$pushUps, Posture=$postureCorrections")
-
-    // Helper function to update database and preferences in one place
+    // Helper function to update the database
     fun updateData() {
         dbhelper.insertOrUpdateData(
             ExerciseData(
-                currentDate = AppGlobals.openedDay,
+                currentDate = openedDay,
                 pushups = pushUps,
                 posture = postureCorrections
             )
         )
-        editor.putInt("pushUps", pushUps)
-            .putInt("postureCorrections", postureCorrections)
-            .apply()
         Log.d("ExercisesScreen", "Updated exercise data: Pushups=$pushUps, Posture=$postureCorrections")
     }
+
+    Log.d("ExercisesScreen", "Recomposing for openedDay=$openedDay, Pushups=$pushUps, Posture=$postureCorrections")
 
     Column(
         modifier = Modifier
@@ -268,7 +237,6 @@ fun ExercisesScreen() {
             }
         )
 
-        // Submit Button
         Button(
             onClick = {
                 dbhelper.exportToCSV(context)
@@ -280,6 +248,7 @@ fun ExercisesScreen() {
         }
     }
 }
+
 
 @Composable
 fun ExerciseCounter(

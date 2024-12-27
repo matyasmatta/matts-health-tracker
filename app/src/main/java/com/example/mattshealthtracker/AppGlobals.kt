@@ -14,6 +14,14 @@ object AppGlobals {
     var openedDay: String = currentDay
 
     // Helper function to convert string date to LocalDate
+    fun getCurrentDayAsLocalDate(): LocalDate {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        return sdf.parse(currentDay)?.let {
+            it.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+        } ?: LocalDate.now() // Default to today's date if parsing fails
+    }
+
+    // Helper function to convert string date to LocalDate
     fun getOpenedDayAsLocalDate(): LocalDate {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         return sdf.parse(openedDay)?.let {
