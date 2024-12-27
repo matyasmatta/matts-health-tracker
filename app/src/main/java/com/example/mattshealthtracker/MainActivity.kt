@@ -89,8 +89,26 @@ fun ExercisesScreen() {
     val preferences = context.getSharedPreferences("exercise_tracker", Context.MODE_PRIVATE)
     val editor = preferences.edit()
 
-    var pushUps by remember { mutableStateOf(preferences.getInt("pushUps", 0)) }
-    var postureCorrections by remember { mutableStateOf(preferences.getInt("postureCorrections", 0)) }
+    // Fetch today's data from the database
+    val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    val exerciseData = dbhelper.fetchExerciseDataForToday()
+
+    // Initialize counters with fetched values or default to 0
+    var pushUps by remember { mutableStateOf(exerciseData?.pushups ?: 0) }
+    var postureCorrections by remember { mutableStateOf(exerciseData?.posture ?: 0) }
+
+    editor.putInt("postureCorrections", postureCorrections).apply()
+    editor.putInt("pushUps", pushUps).apply()
+
+    fun updateData() {
+        dbhelper.insertOrUpdateData(
+            ExerciseData(
+                currentDate = currentDate,
+                pushups = pushUps,
+                posture = postureCorrections
+            )
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -106,11 +124,13 @@ fun ExercisesScreen() {
             onIncrement = {
                 pushUps += 5
                 editor.putInt("pushUps", pushUps).apply()
+                updateData()
             },
             onDecrement = {
                 if (pushUps > 0) {
                     pushUps--
                     editor.putInt("pushUps", pushUps).apply()
+                    updateData()
                 }
             }
         )
@@ -121,11 +141,13 @@ fun ExercisesScreen() {
             onIncrement = {
                 postureCorrections++
                 editor.putInt("postureCorrections", postureCorrections).apply()
+                updateData()
             },
             onDecrement = {
                 if (postureCorrections > 0) {
                     postureCorrections--
                     editor.putInt("postureCorrections", postureCorrections).apply()
+                    updateData()
                 }
             }
         )
@@ -133,27 +155,12 @@ fun ExercisesScreen() {
         // Submit Button
         Button(
             onClick = {
-
-                // Insert data into the database
-                dbhelper.insertData(
-                    ExerciseData(
-                        id = 0, // Auto-increment ID
-                        timestamp = "", // Let the database handle the timestamp
-                        pushups = pushUps,
-                        posture = postureCorrections
-                    )
-                )
                 dbhelper.exportToCSV(context)
-
-                // Reset input fields
-                pushUps = 0
-                postureCorrections = 0
-
-                Toast.makeText(context, "Data submitted successfully!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Data exported successfully!", Toast.LENGTH_SHORT).show()
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Submit")
+            Text("Export to CSV")
         }
     }
 }

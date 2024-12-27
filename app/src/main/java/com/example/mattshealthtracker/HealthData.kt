@@ -29,8 +29,7 @@ data class MedicationData(
 )
 
 data class ExerciseData (
-    val id: Int = 0,
-    val timestamp: String,
+    val currentDate: String,
     val pushups: Int = 0,
     val posture: Int =0
 )
