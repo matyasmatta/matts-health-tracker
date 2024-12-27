@@ -100,7 +100,7 @@ fun HealthTrackerApp() {
                 when (currentScreen) {
                     is BottomNavItem.AddData -> HealthTrackerScreen()
                     is BottomNavItem.Exercises -> ExercisesScreen(openedDay) // Pass openedDay to the screen
-                    is BottomNavItem.MedicationTracking -> MedicationScreen()
+                    is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay) // Pass openedDay to the screen
                 }
             }
         }
@@ -279,17 +279,24 @@ fun ExerciseCounter(
 }
 
 @Composable
-fun MedicationScreen() {
+fun MedicationScreen(openedDay: String) {
     val context = LocalContext.current
-    val currentDate =SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
     val dbHelper = MedicationDatabaseHelper(context)
 
-    // Fetch medication data from the database
-    var medicationData by remember { mutableStateOf<MedicationData?>(null) }
-
-    LaunchedEffect(Unit) {
-        medicationData = dbHelper.fetchMedicationDataForToday()
-    }
+    // Fetch data dynamically whenever `openedDay` changes
+    var medicationData = dbHelper.fetchMedicationDataForDate(openedDay) ?: MedicationData(
+        currentDate = openedDay,
+        doxyLactose = false,
+        doxyMeal = false,
+        doxyDose = false,
+        doxyWater = false,
+        prednisoneDose = false,
+        prednisoneMeal = false,
+        vitamins = false,
+        probioticsMorning = false,
+        probioticsEvening = false,
+        sideEffects = ""
+    )
 
     // Medication state
     var doxyLactose by remember { mutableStateOf(medicationData?.doxyLactose ?: false) }
@@ -322,7 +329,7 @@ fun MedicationScreen() {
     fun saveMedicationData() {
         Log.d("MedicationScreen", "Saving medication data.")
         dbHelper.insertOrUpdateMedicationData(MedicationData(
-            currentDate = currentDate,
+            currentDate = openedDay,
             doxyLactose = doxyLactose,
             doxyMeal = doxyMeal,
             doxyDose = doxyDose,

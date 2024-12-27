@@ -86,6 +86,56 @@ class MedicationDatabaseHelper(context: Context) :
         db.close()
     }
 
+    // Fetch medication data for the any specific day
+    fun fetchMedicationDataForDate(date: String): MedicationData? {
+        val db = readableDatabase
+        Log.d("MedicationDatabaseHelper", "Fetching $date MedicationData.")
+
+        val cursor: Cursor = db.query(
+            TABLE_NAME,
+            null,
+            "$COLUMN_DATE = ?",
+            arrayOf(date),
+            null,
+            null,
+            null
+        )
+
+        var data: MedicationData? = null
+        if (cursor.moveToFirst()) {
+            val dateIndex = cursor.getColumnIndexOrThrow(COLUMN_DATE)
+            val doxyLactoseIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_LACTOSE)
+            val doxyMealIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_MEAL)
+            val doxyDoseIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_DOSE)
+            val doxyWaterIndex = cursor.getColumnIndexOrThrow(COLUMN_DOXY_WATER)
+            val prednisoneDoseIndex = cursor.getColumnIndexOrThrow(COLUMN_PREDNISONE_DOSE)
+            val prednisoneMealIndex = cursor.getColumnIndexOrThrow(COLUMN_PREDNISONE_MEAL)
+            val vitaminsIndex = cursor.getColumnIndexOrThrow(COLUMN_VITAMINS)
+            val probioticsMorningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_MORNING)
+            val probioticsEveningIndex = cursor.getColumnIndexOrThrow(COLUMN_PROBIOTICS_EVENING)
+            val sideEffectsIndex = cursor.getColumnIndexOrThrow(COLUMN_SIDE_EFFECTS)
+
+            data = MedicationData(
+                currentDate = cursor.getString(dateIndex),
+                doxyLactose = cursor.getInt(doxyLactoseIndex) == 1,
+                doxyMeal = cursor.getInt(doxyMealIndex) == 1,
+                doxyDose = cursor.getInt(doxyDoseIndex) == 1,
+                doxyWater = cursor.getInt(doxyWaterIndex) == 1,
+                prednisoneDose = cursor.getInt(prednisoneDoseIndex) == 1,
+                prednisoneMeal = cursor.getInt(prednisoneMealIndex) == 1,
+                vitamins = cursor.getInt(vitaminsIndex) == 1,
+                probioticsMorning = cursor.getInt(probioticsMorningIndex) == 1,
+                probioticsEvening = cursor.getInt(probioticsEveningIndex) == 1,
+                sideEffects = cursor.getString(sideEffectsIndex)
+            )
+        }
+
+        cursor.close()
+        db.close()
+        Log.d("MedicationDatabaseHelper", "Fetched today's data: $data")
+        return data
+    }
+
     // Fetch medication data for the current day
     fun fetchMedicationDataForToday(): MedicationData? {
         val db = readableDatabase
