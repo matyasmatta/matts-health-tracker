@@ -86,20 +86,28 @@ fun HealthTrackerApp() {
 @Composable
 fun ExercisesScreen() {
     val context = LocalContext.current
-    val dbhelper = ExerciseDatabaseHelper(context)
+
+    // Manage database lifecycle properly
+    val dbhelper = remember { ExerciseDatabaseHelper(context) }
+    DisposableEffect(Unit) {
+        onDispose { dbhelper.close() } // Close the database when composable is disposed
+    }
+
     val preferences = context.getSharedPreferences("exercise_tracker", Context.MODE_PRIVATE)
     val editor = preferences.edit()
 
     // Fetch today's data from the database
-    val exerciseData = dbhelper.fetchExerciseDataForDate(AppGlobals.openedDay)
+    val exerciseData = dbhelper.fetchExerciseDataForDate(AppGlobals.openedDay) ?: ExerciseData(
+        currentDate = AppGlobals.openedDay,
+        pushups = 0,
+        posture = 0
+    )
 
-    // Initialize counters with fetched values or default to 0
-    var pushUps by remember { mutableStateOf(exerciseData?.pushups ?: 0) }
-    var postureCorrections by remember { mutableStateOf(exerciseData?.posture ?: 0) }
+    // Initialize counters with fetched values
+    var pushUps by remember { mutableStateOf(exerciseData.pushups) }
+    var postureCorrections by remember { mutableStateOf(exerciseData.posture) }
 
-    editor.putInt("postureCorrections", postureCorrections).apply()
-    editor.putInt("pushUps", pushUps).apply()
-
+    // Helper function to update database and preferences in one place
     fun updateData() {
         dbhelper.insertOrUpdateData(
             ExerciseData(
@@ -108,6 +116,9 @@ fun ExercisesScreen() {
                 posture = postureCorrections
             )
         )
+        editor.putInt("pushUps", pushUps)
+            .putInt("postureCorrections", postureCorrections)
+            .apply()
     }
 
     Column(
@@ -123,13 +134,11 @@ fun ExercisesScreen() {
             count = pushUps,
             onIncrement = {
                 pushUps += 5
-                editor.putInt("pushUps", pushUps).apply()
                 updateData()
             },
             onDecrement = {
                 if (pushUps > 0) {
                     pushUps--
-                    editor.putInt("pushUps", pushUps).apply()
                     updateData()
                 }
             }
@@ -140,13 +149,11 @@ fun ExercisesScreen() {
             count = postureCorrections,
             onIncrement = {
                 postureCorrections++
-                editor.putInt("postureCorrections", postureCorrections).apply()
                 updateData()
             },
             onDecrement = {
                 if (postureCorrections > 0) {
                     postureCorrections--
-                    editor.putInt("postureCorrections", postureCorrections).apply()
                     updateData()
                 }
             }
