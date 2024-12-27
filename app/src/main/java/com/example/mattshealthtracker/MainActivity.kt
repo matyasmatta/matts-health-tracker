@@ -673,8 +673,8 @@ fun HealthTrackerScreen(openedDay: String) {
     val dbHelper = HealthDatabaseHelper(context)
     Log.d("HealthTrackerScreen", "Recomposing HealthTrackerScreen for openedDay=$openedDay")
 
-    // Fetch data dynamically whenever `openedDay` changes
-    var healthData by remember { mutableStateOf(dbHelper.fetchHealthDataForDate(openedDay) ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")) }
+    // State for storing health data from the database
+    var healthData by remember { mutableStateOf(HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")) }
 
     // Initialize state for slider values based on healthData using mutableStateOf
     var symptomValues by remember { mutableStateOf(
@@ -711,7 +711,7 @@ fun HealthTrackerScreen(openedDay: String) {
     // Add scroll support
     val scrollState = rememberScrollState()
 
-    // Helper function to update the database
+    // Function to update the database and healthData state
     fun updateData() {
         Log.d("HealthTrackerScreen", "updateData() called")
         val updatedHealthData = HealthData(
@@ -730,31 +730,38 @@ fun HealthTrackerScreen(openedDay: String) {
         healthData = updatedHealthData // Update healthData state
     }
 
+    // LaunchedEffect to update healthData when openedDay changes
+    LaunchedEffect(openedDay) {
+        Log.d("HealthTrackerScreen", "Fetching health data for openedDay=$openedDay")
+        // Fetch health data from the database for the current openedDay
+        val fetchedData = dbHelper.fetchHealthDataForDate(openedDay) ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
+        healthData = fetchedData
+
+        // Set slider values based on fetched data
+        symptomValues = listOf(
+            fetchedData.malaise,
+            fetchedData.soreThroat,
+            fetchedData.lymphadenopathy
+        )
+        externalValues = listOf(
+            fetchedData.exerciseLevel,
+            fetchedData.stressLevel,
+            fetchedData.illnessImpact
+        )
+        mentalValues = listOf(
+            fetchedData.depression,
+            fetchedData.hopelessness
+        )
+        notes = fetchedData.notes
+    }
+
     // Call updateData whenever any slider or field changes
     LaunchedEffect(symptomValues, externalValues, mentalValues, notes) {
         Log.d("HealthTrackerScreen", "LaunchedEffect triggered")
         updateData()
     }
 
-    // LaunchedEffect to update slider values when healthData changes (when date changes)
-    LaunchedEffect(healthData) {
-        symptomValues = listOf(
-            healthData.malaise,
-            healthData.soreThroat,
-            healthData.lymphadenopathy
-        )
-        externalValues = listOf(
-            healthData.exerciseLevel,
-            healthData.stressLevel,
-            healthData.illnessImpact
-        )
-        mentalValues = listOf(
-            healthData.depression,
-            healthData.hopelessness
-        )
-        notes = healthData.notes
-    }
-
+    // Main layout for the screen
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -768,8 +775,7 @@ fun HealthTrackerScreen(openedDay: String) {
             items = symptomLabels.zip(symptomValues),
             onValuesChange = { updatedValues ->
                 symptomValues = updatedValues
-            },
-            healthData = healthData
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -780,8 +786,7 @@ fun HealthTrackerScreen(openedDay: String) {
             items = externalLabels.zip(externalValues),
             onValuesChange = { updatedValues ->
                 externalValues = updatedValues
-            },
-            healthData = healthData
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -792,8 +797,7 @@ fun HealthTrackerScreen(openedDay: String) {
             items = mentalLabels.zip(mentalValues),
             onValuesChange = { updatedValues ->
                 mentalValues = updatedValues
-            },
-            healthData = healthData
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -802,8 +806,7 @@ fun HealthTrackerScreen(openedDay: String) {
         Text("Notes", style = MaterialTheme.typography.headlineMedium)
         TextInputField(
             text = notes,
-            onTextChange = { newText -> notes = newText },
-            healthData = healthData
+            onTextChange = { newText -> notes = newText }
         )
 
         // Submit button
@@ -822,8 +825,7 @@ fun HealthTrackerScreen(openedDay: String) {
 @Composable
 fun SymptomSliderGroup(
     items: List<Pair<String, Float>>,
-    onValuesChange: (List<Float>) -> Unit,
-    healthData: HealthData
+    onValuesChange: (List<Float>) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -841,12 +843,6 @@ fun SymptomSliderGroup(
                         if (i == index) newValue else pair.second
                     }
                     onValuesChange(updatedValues)
-                },
-                initialValue = when (index) {
-                    0 -> healthData.malaise
-                    1 -> healthData.soreThroat
-                    2 -> healthData.lymphadenopathy
-                    else -> 0f
                 }
             )
         }
@@ -856,64 +852,31 @@ fun SymptomSliderGroup(
 @Composable
 fun ExternalSliderGroup(
     items: List<Pair<String, Float>>,
-    onValuesChange: (List<Float>) -> Unit,
-    healthData: HealthData
+    onValuesChange: (List<Float>) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         items.forEachIndexed { index, item ->
-            when (item.first) {
-                "Exercise Level" -> {
-                    SliderInput(
-                        label = item.first,
-                        value = item.second,
-                        valueRange = 0f..4f,
-                        steps = 3,
-                        labels = listOf("Bedbound", "Under 5 km", "Under 10 km", "Above 10 km", "Extraordinary"),
-                        onValueChange = { newValue ->
-                            val updatedValues = items.mapIndexed { i, pair ->
-                                if (i == index) newValue else pair.second
-                            }
-                            onValuesChange(updatedValues)
-                        },
-                        initialValue = healthData.exerciseLevel
-                    )
+            SliderInput(
+                label = item.first,
+                value = item.second,
+                valueRange = 0f..4f,
+                steps = 3,
+                labels = when (item.first) {
+                    "Exercise Level" -> listOf("Bedbound", "Under 5 km", "Under 10 km", "Above 10 km", "Extraordinary")
+                    "Stress Level" -> listOf("Serene", "Calm", "Mild", "Moderate", "Severe")
+                    "Illness Impact" -> listOf("None", "Slight", "Noticeable", "Day-altering", "Extreme")
+                    else -> listOf("None", "Very Mild", "Mild", "Moderate", "Severe")
+                },
+                onValueChange = { newValue ->
+                    val updatedValues = items.mapIndexed { i, pair ->
+                        if (i == index) newValue else pair.second
+                    }
+                    onValuesChange(updatedValues)
                 }
-                "Stress Level" -> {
-                    SliderInput(
-                        label = item.first,
-                        value = item.second,
-                        valueRange = 0f..4f,
-                        steps = 3,
-                        labels = listOf("Serene", "Calm", "Mild", "Moderate", "Severe"),
-                        onValueChange = { newValue ->
-                            val updatedValues = items.mapIndexed { i, pair ->
-                                if (i == index) newValue else pair.second
-                            }
-                            onValuesChange(updatedValues)
-                        },
-                        initialValue = healthData.stressLevel
-                    )
-                }
-                "Illness Impact" -> {
-                    SliderInput(
-                        label = item.first,
-                        value = item.second,
-                        valueRange = 0f..4f,
-                        steps = 3,
-                        labels = listOf("None", "Slight", "Noticeable", "Day-altering", "Extreme"),
-                        onValueChange = { newValue ->
-                            val updatedValues = items.mapIndexed { i, pair ->
-                                if (i == index) newValue else pair.second
-                            }
-                            onValuesChange(updatedValues)
-                        },
-                        initialValue = healthData.illnessImpact
-                    )
-                }
-            }
+            )
         }
     }
 }
@@ -921,8 +884,7 @@ fun ExternalSliderGroup(
 @Composable
 fun MentalSliderGroup(
     items: List<Pair<String, Float>>,
-    onValuesChange: (List<Float>) -> Unit,
-    healthData: HealthData
+    onValuesChange: (List<Float>) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -953,8 +915,7 @@ fun SliderInput(
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int,
     labels: List<String>,
-    onValueChange: (Float) -> Unit,
-    initialValue: Float // Add initialValue parameter
+    onValueChange: (Float) -> Unit
 ) {
     // Map slider values to descriptive text
     val displayedLabel = labels[value.toInt()] // Display text based on the slider value
@@ -962,33 +923,33 @@ fun SliderInput(
     Column(
         modifier = Modifier.fillMaxWidth()
     ) {
-        var sliderValue by remember { mutableStateOf(initialValue) }
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        key(value) { // Wrap Slider in key composable
-            Slider(
-                value = sliderValue,
-                onValueChange = onValueChange,
-                valueRange = valueRange,
-                steps = steps,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
-        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
         Text(displayedLabel, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-fun TextInputField(text: String, onTextChange: (String) -> Unit, healthData: HealthData) {
-    Column {
-        OutlinedTextField(
-            value = text,
-            onValueChange = onTextChange,
-            modifier = Modifier.fillMaxWidth(),
-            // Set initial value based on healthData
-            placeholder = { Text(healthData.notes) }
-        )
-    }
+fun TextInputField(
+    text: String,
+    onTextChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = text,
+        onValueChange = onTextChange,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+    )
 }
+
 
 @Preview(showBackground = true)
 @Composable
