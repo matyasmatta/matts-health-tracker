@@ -11,6 +11,7 @@ import java.io.BufferedWriter
 import java.io.FileWriter
 import java.io.IOException
 import com.example.mattshealthtracker.AppGlobals
+import kotlin.compareTo
 
 class HealthDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
@@ -19,8 +20,7 @@ class HealthDatabaseHelper(context: Context) :
         const val DATABASE_NAME = "health_tracker.db"
         const val DATABASE_VERSION = 1
         const val TABLE_NAME = "health_data"
-        const val COLUMN_ID = "id"
-        const val COLUMN_TIMESTAMP = "timestamp"
+        const val COLUMN_DATE = "date"
         const val COLUMN_MALAIS = "malaise"
         const val COLUMN_SORE_THROAT = "sore_throat"
         const val COLUMN_LYMPHADENOPATHY = "lymphadenopathy"
@@ -36,8 +36,7 @@ class HealthDatabaseHelper(context: Context) :
     override fun onCreate(db: SQLiteDatabase?) {
         val CREATE_TABLE = """
             CREATE TABLE $TABLE_NAME (
-                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                $COLUMN_TIMESTAMP DATETIME DEFAULT CURRENT_TIMESTAMP,
+                $COLUMN_DATE STRING PRIMARY KEY,
                 $COLUMN_MALAIS REAL,
                 $COLUMN_SORE_THROAT REAL,
                 $COLUMN_LYMPHADENOPATHY REAL,
@@ -84,6 +83,70 @@ class HealthDatabaseHelper(context: Context) :
         db.close()
     }
 
+    fun fetchHealthDataForDate(date: String): HealthData? {
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_NAME,
+            null,
+            "$COLUMN_DATE = ?",
+            arrayOf(date),
+            null,
+            null,
+            null
+        )
+
+        var healthData: HealthData? = null
+        if (cursor.moveToFirst()) {
+            healthData = HealthData(
+                currentDate = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_DATE)),
+                malaise = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_MALAIS)),
+                soreThroat = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_SORE_THROAT)),
+                lymphadenopathy = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_LYMPHADENOPATHY)),
+                exerciseLevel = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_EXERCISE_LEVEL)),
+                stressLevel = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_STRESS_LEVEL)),
+                illnessImpact = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_ILLNESS_IMPACT)),
+                depression = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_DEPRESSION)),
+                hopelessness = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_HOPELESSNESS)),
+                notes = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NOTES))
+            )
+        }
+
+        cursor.close()
+        db.close()
+        return healthData
+    }
+
+    fun insertOrUpdateHealthData(data: HealthData) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COLUMN_DATE, data.currentDate)
+            put(COLUMN_MALAIS, data.malaise)
+            put(COLUMN_SORE_THROAT, data.soreThroat)
+            put(COLUMN_LYMPHADENOPATHY, data.lymphadenopathy)
+            put(COLUMN_EXERCISE_LEVEL, data.exerciseLevel)
+            put(COLUMN_STRESS_LEVEL, data.stressLevel)
+            put(COLUMN_ILLNESS_IMPACT, data.illnessImpact)
+            put(COLUMN_DEPRESSION, data.depression)
+            put(COLUMN_HOPELESSNESS, data.hopelessness)
+            put(COLUMN_NOTES, data.notes)
+        }
+
+        val result = db.insertWithOnConflict(
+            TABLE_NAME,
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
+
+        if (result == -1L) {
+            Log.e("DatabaseError", "Error inserting or updating data")
+        } else {
+            Log.d("Database", "Data inserted or updated successfully")
+        }
+        db.close()
+    }
+
+    // LEAVE THESE ALONE
     // Fetch all data from the database
     fun fetchAllData(): List<HealthData> {
         val db = readableDatabase
@@ -94,8 +157,7 @@ class HealthDatabaseHelper(context: Context) :
         if (cursor.moveToFirst()) {
             do {
                 // Validate column indices
-                val idIndex = cursor.getColumnIndexOrThrow(COLUMN_ID)
-                val timestampIndex = cursor.getColumnIndexOrThrow(COLUMN_TIMESTAMP)
+                val dateIndex = cursor.getColumnIndexOrThrow(COLUMN_DATE)
                 val malaiseIndex = cursor.getColumnIndexOrThrow(COLUMN_MALAIS)
                 val soreThroatIndex = cursor.getColumnIndexOrThrow(COLUMN_SORE_THROAT)
                 val lymphadenopathyIndex = cursor.getColumnIndexOrThrow(COLUMN_LYMPHADENOPATHY)
@@ -107,14 +169,13 @@ class HealthDatabaseHelper(context: Context) :
                 val notesIndex = cursor.getColumnIndexOrThrow(COLUMN_NOTES)
 
                 // If any of the column indices are -1, something went wrong
-                if (timestampIndex < 0 || malaiseIndex < 0 || soreThroatIndex < 0 || lymphadenopathyIndex < 0) {
+                if (dateIndex < 0 || malaiseIndex < 0 || soreThroatIndex < 0 || lymphadenopathyIndex < 0) {
                     Log.e("DatabaseError", "Invalid column indices for fetching data.")
                     return emptyList() // Or handle as needed
                 }
 
                 val dataItem = HealthData(
-                    id = cursor.getInt(idIndex),
-                    timestamp = cursor.getString(timestampIndex),
+                    currentDate = cursor.getString(dateIndex),
                     malaise = cursor.getFloat(malaiseIndex),
                     soreThroat = cursor.getFloat(soreThroatIndex),
                     lymphadenopathy = cursor.getFloat(lymphadenopathyIndex),
@@ -145,13 +206,13 @@ class HealthDatabaseHelper(context: Context) :
             val writer = BufferedWriter(FileWriter(csvFile))
 
             // Write header
-            writer.write("ID,Timestamp,Malaise,Sore Throat,Lymphadenopathy,Exercise Level,Stress Level,Illness Impact,Depression,Hopelessness,Notes\n")
+            writer.write("Date,Malaise,Sore Throat,Lymphadenopathy,Exercise Level,Stress Level,Illness Impact,Depression,Hopelessness,Notes\n")
 
             // Write data
             for (entry in data) {
                 // Wrap the notes column in quotes to handle commas or special characters
                 val sanitizedNotes = "\"${entry.notes.replace("\"", "\"\"")}\""
-                writer.write("${entry.id},${entry.timestamp},${entry.malaise},${entry.soreThroat},${entry.lymphadenopathy},${entry.exerciseLevel},${entry.stressLevel},${entry.illnessImpact},${entry.depression},${entry.hopelessness},$sanitizedNotes\n")
+                writer.write("${entry.currentDate},${entry.malaise},${entry.soreThroat},${entry.lymphadenopathy},${entry.exerciseLevel},${entry.stressLevel},${entry.illnessImpact},${entry.depression},${entry.hopelessness},$sanitizedNotes\n")
             }
 
             writer.close()

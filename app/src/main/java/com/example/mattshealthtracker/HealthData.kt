@@ -1,8 +1,7 @@
 package com.example.mattshealthtracker
 
 data class HealthData(
-    val id: Int = 0,
-    val timestamp: String,
+    val currentDate: String,
     val malaise: Float,
     val soreThroat: Float,
     val lymphadenopathy: Float,
