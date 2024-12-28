@@ -37,9 +37,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.FontWeight
 import java.time.LocalDate
-import kotlin.collections.get
-import kotlin.div
-import kotlin.times
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
