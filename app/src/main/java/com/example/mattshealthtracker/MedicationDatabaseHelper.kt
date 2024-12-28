@@ -223,7 +223,7 @@ class MedicationDatabaseHelper(context: Context) :
     // Fetch all medication data from the database
     private fun fetchAllMedicationData(): List<MedicationData> {
         val db = readableDatabase
-        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null, null,"$COLUMN_DATE ASC")
+        val cursor: Cursor = db.query(TABLE_NAME, null, null, null, null, null,"$COLUMN_DATE ASC")
 
         val data = mutableListOf<MedicationData>()
 
