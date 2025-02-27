@@ -43,13 +43,11 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import kotlin.math.roundToInt
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.CircleShape
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
@@ -656,8 +654,10 @@ fun HealthTrackerScreen(openedDay: String) {
     val dbHelper = HealthDatabaseHelper(context)
     // Log.d("HealthTrackerScreen", "Recomposing HealthTrackerScreen for openedDay=$openedDay")
 
-    // Updated HealthData now includes only the fields used in this screen.
-    var healthData by remember { mutableStateOf(HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")) }
+    // HealthData now includes sleepQuality, sleepLength, sleepReadiness.
+    var healthData by remember { mutableStateOf(
+        HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
+    ) }
 
     // Slider state for each group.
     var symptomValues by remember { mutableStateOf(
@@ -680,12 +680,20 @@ fun HealthTrackerScreen(openedDay: String) {
             healthData.hopelessness
         )
     )}
+    var sleepValues by remember { mutableStateOf(
+        listOf(
+            healthData.sleepQuality,
+            healthData.sleepLength,
+            healthData.sleepReadiness
+        )
+    )}
     var notes by remember { mutableStateOf(healthData.notes) }
 
     // Define labels.
     val symptomLabels = listOf("Malaise", "Sore Throat", "Lymphadenopathy")
     val externalLabels = listOf("Exercise Level", "Stress Level", "Illness Impact")
     val mentalLabels = listOf("Depression", "Hopelessness")
+    val sleepLabels = listOf("Sleep quality", "Sleep length", "Sleep readiness")
 
     // Scroll state.
     val scrollState = rememberScrollState()
@@ -714,8 +722,11 @@ fun HealthTrackerScreen(openedDay: String) {
     val yesterdayMentalValues = yesterdayHealthData?.let {
         listOf(it.depression, it.hopelessness)
     }
+    val yesterdaySleepValues = yesterdayHealthData?.let {
+        listOf(it.sleepQuality, it.sleepLength, it.sleepReadiness)
+    }
 
-    // Function to update data.
+    // Function to update the database and healthData state.
     fun updateData() {
         val updatedHealthData = HealthData(
             currentDate = openedDay,
@@ -727,6 +738,9 @@ fun HealthTrackerScreen(openedDay: String) {
             illnessImpact = externalValues[2],
             depression = mentalValues[0],
             hopelessness = mentalValues[1],
+            sleepQuality = sleepValues[0],
+            sleepLength = sleepValues[1],
+            sleepReadiness = sleepValues[2],
             notes = notes
         )
         dbHelper.insertOrUpdateHealthData(updatedHealthData)
@@ -734,17 +748,20 @@ fun HealthTrackerScreen(openedDay: String) {
         dbHelper.exportToCSV(context)
     }
 
+    // LaunchedEffect to fetch today's data.
     LaunchedEffect(openedDay) {
         val fetchedData = dbHelper.fetchHealthDataForDate(openedDay)
-            ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
+            ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
         healthData = fetchedData
         symptomValues = listOf(fetchedData.malaise, fetchedData.soreThroat, fetchedData.lymphadenopathy)
         externalValues = listOf(fetchedData.exerciseLevel, fetchedData.stressLevel, fetchedData.illnessImpact)
         mentalValues = listOf(fetchedData.depression, fetchedData.hopelessness)
+        sleepValues = listOf(fetchedData.sleepQuality, fetchedData.sleepLength, fetchedData.sleepReadiness)
         notes = fetchedData.notes
     }
 
-    LaunchedEffect(symptomValues, externalValues, mentalValues, notes) {
+    // Call updateData whenever any slider or field changes.
+    LaunchedEffect(symptomValues, externalValues, mentalValues, sleepValues, notes) {
         updateData()
     }
 
@@ -777,6 +794,13 @@ fun HealthTrackerScreen(openedDay: String) {
             onValuesChange = { updatedValues -> mentalValues = updatedValues }
         )
         Spacer(modifier = Modifier.height(16.dp))
+        Text("Sleep", style = MaterialTheme.typography.titleLarge)
+        SleepSliderGroup(
+            items = sleepLabels.zip(sleepValues),
+            yesterdayValues = yesterdaySleepValues,
+            onValuesChange = { updatedValues -> sleepValues = updatedValues }
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         Text("Notes", style = MaterialTheme.typography.titleLarge)
         TextInputField(
             text = notes,
@@ -786,7 +810,7 @@ fun HealthTrackerScreen(openedDay: String) {
     }
 }
 
-// --- Slider Groups with Optional Yesterday Values --------------------------------
+// --- Slider Group Composables -----------------------------------------------------
 
 @Composable
 fun SymptomSliderGroup(
@@ -872,6 +896,41 @@ fun MentalSliderGroup(
     }
 }
 
+@Composable
+fun SleepSliderGroup(
+    items: List<Pair<String, Float>>,
+    yesterdayValues: List<Float>? = null,
+    onValuesChange: (List<Float>) -> Unit
+) {
+    // For Sleep, we want custom labels for each slider.
+    // We'll assume the order of items is:
+    // 0: Sleep quality, 1: Sleep length, 2: Sleep readiness.
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items.forEachIndexed { index, item ->
+            val labelList = when (item.first) {
+                "Sleep quality" -> listOf("Insomnia", "Very poor", "Normal", "Solid", "Exceptional")
+                "Sleep length" -> listOf("<6h", "6-7h", "7-8h", "8-9h", ">9h")
+                "Sleep readiness" -> listOf("Horrible", "Poor", "Normal", "Ideal", "Exceptional")
+                else -> listOf("", "", "", "", "")
+            }
+            SliderInput(
+                label = item.first,
+                value = item.second,
+                valueRange = 0f..4f,
+                steps = 3,
+                labels = labelList,
+                yesterdayValue = yesterdayValues?.getOrNull(index),
+                onValueChange = { newValue ->
+                    val updatedValues = items.mapIndexed { i, pair ->
+                        if (i == index) newValue else pair.second
+                    }
+                    onValuesChange(updatedValues)
+                }
+            )
+        }
+    }
+}
+
 // --- Modified SliderInput with Yesterday Marker ------------------------------------
 
 @Composable
@@ -887,10 +946,8 @@ fun SliderInput(
     // Compute the nearest anchor index for today's value.
     val nearestIndex = value.roundToInt().coerceIn(0, labels.size - 1)
     val displayedLabel = labels[nearestIndex]
-
     // Compute fraction for today's value.
     val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-
     // Compute fraction for yesterday's value (if available).
     val yesterdayFraction = yesterdayValue?.let {
         (it - valueRange.start) / (valueRange.endInclusive - valueRange.start)
@@ -917,7 +974,6 @@ fun SliderInput(
                     .fillMaxWidth()
                     .padding(vertical = 10.dp)
             )
-
             // Compute the pixel difference between the thumb and yesterday's marker.
             val thumbX = fraction * sliderWidth
             val yesterdayX = yesterdayFraction?.times(sliderWidth)
@@ -931,12 +987,11 @@ fun SliderInput(
                             x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
                             y = 28.dp  // Adjusted vertical position
                         )
-                        .clip(CircleShape)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
                         .size(12.dp)
                 )
             }
-
             // Position the label text directly below today's thumb.
             Text(
                 text = displayedLabel,
@@ -949,7 +1004,6 @@ fun SliderInput(
         }
     }
 }
-
 
 // --- TextInputField remains unchanged -------------------------------
 @Composable

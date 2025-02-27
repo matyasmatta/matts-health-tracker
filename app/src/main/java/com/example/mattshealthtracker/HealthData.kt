@@ -10,6 +10,9 @@ data class HealthData(
     val illnessImpact: Float,
     val depression: Float,
     val hopelessness: Float,
+    val sleepQuality: Float,
+    val sleepLength: Float,
+    val sleepReadiness: Float,
     val notes: String
 )
 
