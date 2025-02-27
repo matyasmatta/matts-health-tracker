@@ -954,6 +954,7 @@ fun SliderInput(
     }
 
     var sliderWidth by remember { mutableStateOf(0) }
+    var labelWidth by remember { mutableStateOf(0) }
     val density = LocalDensity.current
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -969,37 +970,42 @@ fun SliderInput(
                 value = value,
                 onValueChange = onValueChange,
                 valueRange = valueRange,
-                steps = 0, // Continuous slider for high precision
+                steps = 0, // Continuous slider for high precision.
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 10.dp)
             )
-            // Compute the pixel difference between the thumb and yesterday's marker.
+            // Compute the pixel positions.
             val thumbX = fraction * sliderWidth
             val yesterdayX = yesterdayFraction?.times(sliderWidth)
-            val hideYesterdayMarker = yesterdayX != null && abs(thumbX - yesterdayX) < with(density) { 10.dp.toPx() }
+            val hideYesterdayMarker = yesterdayX != null &&
+                    abs(thumbX - yesterdayX) < with(density) { 10.dp.toPx() }
 
-            // If yesterday's value is provided and the cursor isn't too close, show the marker.
+            // If yesterday's value is provided and the thumb isn't too close, show a gray marker.
             if (yesterdayFraction != null && !hideYesterdayMarker) {
                 Box(
                     modifier = Modifier
                         .offset(
                             x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
-                            y = 28.dp  // Adjusted vertical position
+                            y = 28.dp // Adjusted vertical offset.
                         )
                         .clip(androidx.compose.foundation.shape.CircleShape)
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
                         .size(12.dp)
                 )
             }
-            // Position the label text directly below today's thumb.
+            // The label text is measured so that its center aligns with the thumb.
             Text(
                 text = displayedLabel,
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.offset(
-                    x = with(density) { (fraction * sliderWidth - 20).toDp() },
-                    y = 60.dp
-                )
+                modifier = Modifier
+                    .onGloballyPositioned { coordinates ->
+                        labelWidth = coordinates.size.width
+                    }
+                    .offset(
+                        x = with(density) { ((fraction * sliderWidth) - labelWidth / 2).toDp() },
+                        y = 60.dp
+                    )
             )
         }
     }
