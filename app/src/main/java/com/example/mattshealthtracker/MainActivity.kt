@@ -42,8 +42,10 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
+import kotlin.math.roundToInt
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -881,25 +883,48 @@ fun SliderInput(
     label: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int,
+    steps: Int, // Not used here since we use a continuous slider.
     labels: List<String>,
     onValueChange: (Float) -> Unit
 ) {
-    // Map slider values to descriptive text
-    val displayedLabel = labels[value.toInt()] // Display text based on the slider value
+    // Compute the nearest anchor index based on the slider's current value.
+    val nearestIndex = value.roundToInt().coerceIn(0, labels.size - 1)
+    val displayedLabel = labels[nearestIndex]
+    // Compute fraction relative to the slider range.
+    val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
 
-    Column(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = valueRange,
-            steps = steps,
-            modifier = Modifier.padding(vertical = 8.dp)
-        )
-        Text(displayedLabel, style = MaterialTheme.typography.bodySmall)
+    var sliderWidth by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+        // Box to measure slider width.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    sliderWidth = coordinates.size.width
+                }
+        ) {
+            Slider(
+                value = value,
+                onValueChange = onValueChange,
+                valueRange = valueRange,
+                steps = 0, // Continuous slider.
+                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
+            )
+            // Position the label text directly below the thumb.
+            // We compute the horizontal offset from the slider's width multiplied by the fraction.
+            // Subtract an approximate half-width (here, 20 pixels) to center the text.
+            Text(
+                text = displayedLabel,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.offset(
+                    x = with(density) { (fraction * sliderWidth - 20).toDp() },
+                    y = 60.dp // Adjust vertical offset as needed.
+                )
+            )
+        }
     }
 }
 
