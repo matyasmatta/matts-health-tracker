@@ -13,7 +13,7 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = 1
-        versionName = "1.3.0"
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -58,5 +58,6 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation(libs.android.material)
     implementation("androidx.compose.material3:material3-android:1.3.1")
+    implementation("androidx.compose.material:material-icons-extended:1.5.4")
 
 }

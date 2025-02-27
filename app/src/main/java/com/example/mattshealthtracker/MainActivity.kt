@@ -37,6 +37,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.FontWeight
 import java.time.LocalDate
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -344,268 +351,214 @@ fun ExerciseCounter(
     }
 }
 
+// Data class for an individual medication item.
+data class MedicationItem(
+    val name: String,
+    val dosage: Float,  // current dosage value
+    val step: Float,    // dosage increment/decrement step
+    val unit: String,   // e.g., "mg", "IU", "mg-eq"
+    val isStarred: Boolean = false
+)
+
 @Composable
 fun MedicationScreen(openedDay: String) {
     val context = LocalContext.current
-    val dbHelper = MedicationDatabaseHelper(context)
+    val dbHelper = NewMedicationDatabaseHelper(context)
 
-    // Fetch data dynamically whenever `openedDay` changes
-    var medicationData = dbHelper.fetchMedicationDataForDate(openedDay) ?: MedicationData(
-        currentDate = openedDay,
-        doxyLactose = false,
-        doxyMeal = false,
-        doxyDose = false, // boolean for doxycycline dose
-        doxyWater = false,
-        prednisoneDose = false,
-        prednisoneMeal = false,
-        vitamins = false,
-        probioticsMorning = false,
-        probioticsEvening = false,
-        sideEffects = "",
-        doxyDosage = 200 // default integer dosage for doxycycline
+    // Default medication list.
+    val defaultMedications = listOf(
+        MedicationItem("amitriptyline", 0f, 6.25f, "mg"),
+        MedicationItem("inosine pranobex", 0f, 500f, "mg"),
+        MedicationItem("paracetamol", 0f, 250f, "mg"),
+        MedicationItem("ibuprofen", 0f, 200f, "mg"),
+        MedicationItem("vitamin D", 0f, 500f, "IU"),
+        MedicationItem("bisulepine", 0f, 1f, "mg"),
+        MedicationItem("cetirizine", 0f, 5f, "mg"),
+        MedicationItem("doxycycline", 0f, 100f, "mg"),
+        MedicationItem("corticosteroids", 0f, 5f, "mg-eq")
     )
 
-    // Medication state
-    var doxyLactose by remember { mutableStateOf(medicationData.doxyLactose) }
-    var doxyMeal by remember { mutableStateOf(medicationData.doxyMeal) }
-    var doxyDose by remember { mutableStateOf(medicationData.doxyDose) }
-    var doxyWater by remember { mutableStateOf(medicationData.doxyWater) }
-    var prednisoneDose by remember { mutableStateOf(medicationData.prednisoneDose) }
-    var prednisoneMeal by remember { mutableStateOf(medicationData.prednisoneMeal) }
-    var vitamins by remember { mutableStateOf(medicationData.vitamins) }
-    var probioticsMorning by remember { mutableStateOf(medicationData.probioticsMorning) }
-    var probioticsEvening by remember { mutableStateOf(medicationData.probioticsEvening) }
-    var sideEffects by remember { mutableStateOf(medicationData.sideEffects) }
-    var doxyDosage by remember { mutableStateOf(medicationData.doxyDosage) }
+    // Mutable state for the medications list.
+    val medications = remember { mutableStateListOf<MedicationItem>() }
+    // Side effects state.
+    var sideEffects by remember { mutableStateOf("") }
 
-    LaunchedEffect(medicationData) {
-        medicationData?.let {
-            doxyLactose = it.doxyLactose
-            doxyMeal = it.doxyMeal
-            doxyDose = it.doxyDose
-            doxyWater = it.doxyWater
-            prednisoneDose = it.prednisoneDose
-            prednisoneMeal = it.prednisoneMeal
-            vitamins = it.vitamins
-            probioticsMorning = it.probioticsMorning
-            probioticsEvening = it.probioticsEvening
-            sideEffects = it.sideEffects
-            doxyDosage = it.doxyDosage
+    // Load initial data when openedDay changes.
+    LaunchedEffect(openedDay) {
+        val fetchedMedications = dbHelper.fetchMedicationItemsForDate(openedDay)
+        if (fetchedMedications.isNotEmpty()) {
+            medications.clear()
+            medications.addAll(fetchedMedications)
+        } else {
+            medications.clear()
+            medications.addAll(defaultMedications)
+            dbHelper.insertOrUpdateMedicationList(openedDay, defaultMedications)
         }
+        val dbSideEffects = dbHelper.fetchSideEffectsForDate(openedDay)
+        sideEffects = dbSideEffects ?: ""
     }
 
-    // Save to the database whenever any toggle state changes
-    fun saveMedicationData() {
-        Log.d("MedicationScreen", "Saving medication data.")
-        dbHelper.insertOrUpdateMedicationData(MedicationData(
-            currentDate = openedDay,
-            doxyLactose = doxyLactose,
-            doxyMeal = doxyMeal,
-            doxyDose = doxyDose,
-            doxyWater = doxyWater,
-            prednisoneDose = prednisoneDose,
-            prednisoneMeal = prednisoneMeal,
-            vitamins = vitamins,
-            probioticsMorning = probioticsMorning,
-            probioticsEvening = probioticsEvening,
-            sideEffects = sideEffects,
-            doxyDosage = doxyDosage
-        ))
+    // State controlling whether non-starred medications are expanded.
+    var expanded by remember { mutableStateOf(false) }
+
+    // Helper function to update a medication in the list.
+    fun updateMedication(medication: MedicationItem, newMedication: MedicationItem) {
+        val index = medications.indexOf(medication)
+        if (index != -1) {
+            medications[index] = newMedication
+        }
         dbHelper.exportToCSV(context)
     }
 
-    // Define a Composable for Medication Tasks
-    @Composable
-    fun MedicationTask(description: String, state: Boolean, onToggle: (Boolean) -> Unit) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f)
-            )
-            Switch(
-                checked = state,
-                onCheckedChange = { newState ->
-                    onToggle(newState)
-                    saveMedicationData()
-                }
-            )
-        }
+    // Save the current medication list and side effects to the database.
+    fun saveMedicationData() {
+        dbHelper.insertOrUpdateMedicationList(openedDay, medications.toList())
+        dbHelper.insertOrUpdateSideEffects(openedDay, sideEffects)
+        dbHelper.exportToCSV(context)
     }
 
-    // Define a Composable for Doxycycline Dosage Counter
-    @Composable
-    fun DoxycyclineDosageCounter(
-        label: String,
-        count: Int,
-        onIncrement: () -> Unit,
-        onDecrement: () -> Unit
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+    // Derive starred and non-starred lists.
+    val starredMedications = medications.filter { it.isStarred }
+    val nonStarredMedications = medications.filter { !it.isStarred }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onDecrement) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Minus One")
-                }
-                Text("$count mg", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 8.dp))
-                IconButton(onClick = onIncrement) {
-                    Icon(imageVector = Icons.Default.Add, contentDescription = "Plus One")
-                }
-            }
-        }
-    }
-
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        /*item {
-            Text(
-                text = "Medications",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-        }*/
+        Text(
+            text = "Medications",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
 
-        // Medication: Doxycycline
-        item {
-            Text(
-                text = "Doxycycline",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-        item {
-            MedicationTask("No lactose and calcium after 18:00", doxyLactose) {
-                doxyLactose = it
-            }
-        }
-        item {
-            MedicationTask("Last major meal before 18:00", doxyMeal) {
-                doxyMeal = it
-            }
-        }
-        item {
-            MedicationTask("Dose around 22:00", doxyDose) {
-                doxyDose = it
-            }
-        }
-        item {
-            MedicationTask("100 ml water to absorb", doxyWater) {
-                doxyWater = it
-            }
-        }
-        item {
-            DoxycyclineDosageCounter(
-                label = "Daily dosage",
-                count = doxyDosage,
-                onIncrement = { doxyDosage += 50 },
-                onDecrement = { if (doxyDosage > 50) doxyDosage -= 50 }
-            )
-        }
-
-        // Spacer
-        item {
-            Spacer(Modifier.height(40.dp))
-        }
-
-        // Medication: Methylprednisolone
-        item {
-            Text(
-                text = "Methylprednisolone",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-        item {
-            MedicationTask("Dose of 4 mg morning", prednisoneDose) {
-                prednisoneDose = it
-            }
-        }
-        item {
-            MedicationTask("Ingested 5 minutes after meal", prednisoneMeal) {
-                prednisoneMeal = it
-            }
-        }
-
-        // Spacer
-        item {
-            Spacer(Modifier.height(40.dp))
-        }
-
-        // Medication: B-vitamin complex
-        item {
-            Text(
-                text = "B-vitamin complex",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-        item {
-            MedicationTask("Dose of 100/50/1 mg morning", vitamins) {
-                vitamins = it
-            }
-        }
-
-        // Spacer
-        item {
-            Spacer(Modifier.height(40.dp))
-        }
-
-        // Medication: Probiotics
-        item {
-            Text(
-                text = "Probiotics",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-        item {
-            MedicationTask("Morning dose", probioticsMorning) {
-                probioticsMorning = it
-            }
-        }
-        item {
-            MedicationTask("Evening dose", probioticsEvening) {
-                probioticsEvening = it
-            }
-        }
-
-        // Spacer
-        item {
-            Spacer(Modifier.height(40.dp))
-        }
-
-        // Section: Side effects
-        item {
-            Text(
-                text = "Side effects",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        }
-        item {
-            TextField(
-                value = sideEffects,
-                onValueChange = {
-                    sideEffects = it
+        // Display starred medications at the top.
+        starredMedications.forEach { medication ->
+            MedicationItemRow(
+                medication = medication,
+                onIncrement = {
+                    updateMedication(medication, medication.copy(dosage = medication.dosage + medication.step))
                     saveMedicationData()
                 },
-                placeholder = { Text("Enter any side effects here...") },
-                modifier = Modifier.fillMaxWidth()
+                onDecrement = {
+                    if (medication.dosage - medication.step >= 0)
+                        updateMedication(medication, medication.copy(dosage = medication.dosage - medication.step))
+                    saveMedicationData()
+                },
+                onToggleStar = {
+                    updateMedication(medication, medication.copy(isStarred = !medication.isStarred))
+                    saveMedicationData()
+                }
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+        }
+
+        // Expand/collapse header for non-starred medications.
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(vertical = 16.dp)
+        ) {
+            Text(
+                text = if (expanded) "Close medication tab" else "Add medications",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand"
             )
         }
-        // Spacer
-        item {
-            Spacer(Modifier.height(40.dp))
+
+        // Display non-starred medications if expanded.
+        if (expanded) {
+            LazyColumn {
+                items(nonStarredMedications) { medication ->
+                    MedicationItemRow(
+                        medication = medication,
+                        onIncrement = {
+                            updateMedication(medication, medication.copy(dosage = medication.dosage + medication.step))
+                            saveMedicationData()
+                        },
+                        onDecrement = {
+                            if (medication.dosage - medication.step >= 0)
+                                updateMedication(medication, medication.copy(dosage = medication.dosage - medication.step))
+                            saveMedicationData()
+                        },
+                        onToggleStar = {
+                            updateMedication(medication, medication.copy(isStarred = !medication.isStarred))
+                            saveMedicationData()
+                        }
+                    )
+                    Divider()
+                }
+            }
+        }
+
+        // Side effects section.
+        Spacer(modifier = Modifier.height(40.dp))
+        Text(
+            text = "Side effects",
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+        TextField(
+            value = sideEffects,
+            onValueChange = {
+                sideEffects = it
+                saveMedicationData()
+            },
+            placeholder = { Text("Enter any side effects here...") },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+fun MedicationItemRow(
+    medication: MedicationItem,
+    onIncrement: () -> Unit,
+    onDecrement: () -> Unit,
+    onToggleStar: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+    ) {
+        // Star icon: tinted with the Material theme’s secondary color if starred.
+        Icon(
+            imageVector = if (medication.isStarred) Icons.Filled.Star else Icons.Filled.StarBorder,
+            contentDescription = "Toggle Star",
+            tint = if (medication.isStarred)
+                MaterialTheme.colorScheme.secondary
+            else LocalContentColor.current,
+            modifier = Modifier
+                .size(24.dp)
+                .clickable { onToggleStar() }
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = medication.name,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        // Dosage counter with value shown between decrement and increment buttons.
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            IconButton(onClick = { onDecrement() }) {
+                Icon(imageVector = Icons.Filled.Delete, contentDescription = "Decrease dosage")
+            }
+            Text(
+                text = "${medication.dosage} ${medication.unit}",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+            IconButton(onClick = { onIncrement() }) {
+                Icon(imageVector = Icons.Filled.Add, contentDescription = "Increase dosage")
+            }
         }
     }
 }
