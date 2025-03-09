@@ -391,14 +391,45 @@ fun MedicationScreen(openedDay: String) {
     // Load initial data when openedDay changes.
     LaunchedEffect(openedDay) {
         val fetchedMedications = dbHelper.fetchMedicationItemsForDate(openedDay)
-        if (fetchedMedications.isNotEmpty()) {
+
+        if (fetchedMedications.isNotEmpty() && fetchedMedications.any { it.isStarred }) {
+            // If there are starred medications for the current day, use them.
             medications.clear()
             medications.addAll(fetchedMedications)
+        } else if (fetchedMedications.isNotEmpty() && !fetchedMedications.any { it.isStarred }) {
+            // If no starred medications for the current day, fetch starred items from previous day
+            val currentDate = LocalDate.parse(openedDay)
+            val previousDate = currentDate.minusDays(1)
+            val previousDay = previousDate.toString()
+            val previousDayMedications = dbHelper.fetchMedicationItemsForDate(previousDay)
+
+            if (previousDayMedications.isNotEmpty()) {
+                val previousStarredMedicationNames = previousDayMedications
+                    .filter { it.isStarred }
+                    .map { it.name }
+
+                val updatedMedications = fetchedMedications.map { currentDayMedication ->
+                    if (previousStarredMedicationNames.contains(currentDayMedication.name)) {
+                        currentDayMedication.copy(isStarred = true)
+                    } else {
+                        currentDayMedication
+                    }
+                }
+                medications.clear()
+                medications.addAll(updatedMedications)
+                dbHelper.insertOrUpdateMedicationList(openedDay, updatedMedications) // Save updated list with starred items
+            } else {
+                // If no medications for the previous day, keep current day as it is (no starring from prev day)
+                medications.clear()
+                medications.addAll(fetchedMedications) // Keep current day's fetched medications (could be defaults or empty with user edits)
+            }
         } else {
+            // If no medications fetched for the current day, use default medications.
             medications.clear()
             medications.addAll(defaultMedications)
             dbHelper.insertOrUpdateMedicationList(openedDay, defaultMedications)
         }
+
         val dbSideEffects = dbHelper.fetchSideEffectsForDate(openedDay)
         sideEffects = dbSideEffects ?: ""
     }
