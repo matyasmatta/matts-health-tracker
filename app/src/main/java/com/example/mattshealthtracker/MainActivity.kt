@@ -24,10 +24,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import android.content.Context
+import android.net.Uri
 import androidx.compose.material.icons.filled.Delete
 import com.example.mattshealthtracker.ui.theme.MattsHealthTrackerTheme
 import com.example.mattshealthtracker.AppGlobals
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
@@ -47,18 +49,59 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.window.Dialog
 import kotlin.math.abs
+import com.example.mattshealthtracker.BuildConfig // Import BuildConfig
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontFamily
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.example.mattshealthtracker.GoogleDriveUtils
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount // Import GoogleSignInAccount
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // Wrap the app with MaterialTheme to handle dark/light mode
             MattsHealthTrackerTheme {
-                // Provide a Surface for the HealthTrackerApp
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    HealthTrackerApp()
+                androidx.compose.material3.Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.background
+                ) {
+                    var openedDay by rememberSaveable { mutableStateOf(AppGlobals.currentDay) }
+                    var signedInAccount by rememberSaveable { mutableStateOf<GoogleSignInAccount?>(null) }
+
+                    // Function to update signedInAccount
+                    val onSignedInAccountChange: (GoogleSignInAccount?) -> Unit = { account ->
+                        signedInAccount = account
+                    }
+
+                    LaunchedEffect(Unit) {
+                        signedInAccount = GoogleDriveUtils.getExistingAccount(context = this@MainActivity)
+                        if (signedInAccount != null) {
+                            Log.d("MainActivity", "Existing Google Sign-in found: ${signedInAccount?.email}")
+                            // Automatically trigger backup:
+                            GoogleDriveUtils.exportDataToCSVZip(this@MainActivity, Uri.EMPTY, signedInAccount)
+                        } else {
+                            Log.d("MainActivity", "No existing Google Sign-in found on startup.")
+                        }
+                    }
+
+                    // Call HealthTrackerApp and pass necessary values
+                    HealthTrackerApp(
+                        currentSignedInAccount = signedInAccount,
+                        onSignedInAccountChange = onSignedInAccountChange
+                    )
                 }
             }
         }
@@ -72,7 +115,10 @@ sealed class BottomNavItem(val route: String, val label: String, val icon: Image
 }
 
 @Composable
-fun HealthTrackerApp() {
+fun HealthTrackerApp(
+    currentSignedInAccount: GoogleSignInAccount?,
+    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
+) {
     var currentScreen by remember { mutableStateOf<BottomNavItem>(BottomNavItem.AddData) }
     var openedDay by remember { mutableStateOf(AppGlobals.openedDay) } // Single source of truth for openedDay
 
@@ -99,22 +145,34 @@ fun HealthTrackerApp() {
             }
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.padding(innerPadding)) {
-            DateNavigationBar(openedDay, onDateChange = { newDate ->
-                openedDay = newDate
-                AppGlobals.openedDay = newDate // Update the global helper for consistency
-            })
+        // Main content area
+        Column(modifier = Modifier
+            .fillMaxSize()
+            .padding(innerPadding)) {
 
+            // DateNavigationBar and SettingsDialog should be inside the Column and above the main content area
+            DateNavigationBar(
+                openedDay = openedDay,
+                onDateChange = { newDate ->
+                    openedDay = newDate
+                    AppGlobals.openedDay = newDate // Update the global helper for consistency
+                },
+                currentSignedInAccount = currentSignedInAccount,
+                onSignedInAccountChange = onSignedInAccountChange
+            )
+
+            // Content based on the currentScreen
             Box(modifier = Modifier.fillMaxSize()) {
                 when (currentScreen) {
                     is BottomNavItem.AddData -> HealthTrackerScreen(openedDay)
-                    is BottomNavItem.Exercises -> ExercisesScreen(openedDay) // Pass openedDay to the screen
-                    is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay) // Pass openedDay to the screen
+                    is BottomNavItem.Exercises -> ExercisesScreen(openedDay)
+                    is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay)
                 }
             }
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -160,30 +218,28 @@ fun CustomDatePickerDialog(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
+fun DateNavigationBar(
+    openedDay: String,
+    onDateChange: (String) -> Unit,
+    currentSignedInAccount: GoogleSignInAccount?, // Add this parameter
+    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit // Add this parameter
+) {
     var isDatePickerVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val currentDay = AppGlobals.currentDay // Get current day from AppGlobals
+    val currentDay = AppGlobals.currentDay
     val today = AppGlobals.getCurrentDayAsLocalDate().toString()
     val yesterday = AppGlobals.getCurrentDayAsLocalDate().minusDays(1).toString()
-
-    // State to show Toast message
     var showToast by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
-    Log.d("DateNavigation", "Recomposing DateNavigationBar: $openedDay")
+    Log.d("DateNavigation", "Recomposing DateNavigationBar: openedDay=$openedDay")
 
     if (isDatePickerVisible) {
-        // Show DatePickerDialog in a Composable context
-        LaunchedEffect(Unit) {
-            isDatePickerVisible = true // Trigger the dialog to show
-        }
         CustomDatePickerDialog(
             onDateSelected = { selectedDate ->
-                // Protection against future dates
                 if (selectedDate <= AppGlobals.getCurrentDayAsLocalDate()) {
                     onDateChange(selectedDate.toString())
                 } else {
-                    // Set showToast to true to trigger the Toast message
                     showToast = true
                 }
             },
@@ -191,33 +247,52 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
         )
     }
 
-    // Show Toast message if showToast is true
     if (showToast) {
         Toast.makeText(context, "Cannot select a future date!", Toast.LENGTH_SHORT).show()
-        // Reset showToast to false after showing the Toast
         showToast = false
+    }
+
+    if (showSettingsDialog) {
+        SettingsDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            currentSignedInAccount = currentSignedInAccount, // Pass the parameter here!
+            onSignedInAccountChange = onSignedInAccountChange // Pass the callback here!
+        )
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        IconButton(
-            onClick = {
-                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
-                val previousDay = currentDate.minusDays(1)
-                val newDate = previousDay.toString()
-                onDateChange(newDate) // Notify parent of the change
-                Log.d("DateNavigation", "Changed to previous day: $newDate")
-            }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start
         ) {
-            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
+            IconButton(
+                onClick = {
+                    showSettingsDialog = true
+                },
+                modifier = Modifier.padding(end = 8.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
+            }
+
+            IconButton(
+                onClick = {
+                    val currentDate = AppGlobals.getOpenedDayAsLocalDate()
+                    val previousDay = currentDate.minusDays(1)
+                    val newDate = previousDay.toString()
+                    onDateChange(newDate)
+                    Log.d("DateNavigation", "Changed to previous day: $newDate")
+                }
+            ) {
+                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
+            }
         }
 
-        // Show "Yesterday" or "Today" if the opened day matches those days
         Text(
             text = when (openedDay) {
                 yesterday -> "Yesterday"
@@ -236,11 +311,9 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
             onClick = {
                 val currentDate = AppGlobals.getOpenedDayAsLocalDate()
                 val nextDay = currentDate.plusDays(1)
-
-                // Only allow moving to `nextDay` if it's not beyond `currentDay`
                 if (nextDay <= AppGlobals.getCurrentDayAsLocalDate()) {
                     val newDate = nextDay.toString()
-                    onDateChange(newDate) // Notify parent of the change
+                    onDateChange(newDate)
                     Log.d("DateNavigation", "Changed to next day: $newDate")
                 } else {
                     Log.d("DateNavigation", "Cannot go beyond currentDay: $currentDay")
@@ -250,6 +323,169 @@ fun DateNavigationBar(openedDay: String, onDateChange: (String) -> Unit) {
         ) {
             Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next Day")
         }
+    }
+}
+
+@Composable
+fun SettingsDialog(
+    onDismissRequest: () -> Unit,
+    currentSignedInAccount: GoogleSignInAccount?, // Receive signedInAccount as parameter
+    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit // Receive callback to update signedInAccount
+) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val appPackageName = context.packageName
+    val appVersion = BuildConfig.VERSION_NAME
+    val githubLink = "https://github.com/matyasmatta/matts-health-tracker"
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        uri?.let { exportDataToCSVZip(context, it) }
+    }
+
+    var googleDriveSyncEnabled by remember { mutableStateOf(currentSignedInAccount != null) }
+    // No longer manage signedInAccount state locally, use parameter:
+    val signedInAccount = currentSignedInAccount // Use the parameter passed from MainActivity
+
+    val signInLauncher = GoogleDriveUtils.rememberGoogleSignInLauncher { account ->
+        onSignedInAccountChange(account) // Update signedInAccount state in MainActivity using callback
+        if (account != null) {
+            Toast.makeText(context, "Google Sign-in successful: ${account.email}", Toast.LENGTH_SHORT).show()
+            Log.d("SettingsDialog", "Sign-in successful, Account: ${account.email}")
+        } else {
+            Toast.makeText(context, "Google Sign-in failed.", Toast.LENGTH_SHORT).show()
+            Log.w("SettingsDialog", "Sign-in failed")
+        }
+    }
+
+    val scope = rememberCoroutineScope() // <--- Create a coroutine scope
+
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(shape = MaterialTheme.shapes.medium) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Settings", style = MaterialTheme.typography.headlineSmall)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text("Data control", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Google Drive Sync Toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Backup data to Drive", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = googleDriveSyncEnabled,
+                        onCheckedChange = { isChecked ->
+                            googleDriveSyncEnabled = isChecked
+                            Log.d("SettingsDialog", "Google Drive Sync toggled: $isChecked")
+                            if (isChecked) {
+                                if (signedInAccount == null) { // Use the signedInAccount parameter (which reflects state from MainActivity)
+                                    Log.d("SettingsDialog", "Initiating Google Sign-in...")
+                                    scope.launch { // <--- Launch a coroutine here
+                                        GoogleDriveUtils.signInToGoogleDrive(context, signInLauncher) // Call suspend function inside coroutine
+                                    }
+                                } else {
+                                    Log.d("SettingsDialog", "Already signed in: ${signedInAccount?.email}")
+                                    Toast.makeText(context, "Background backup to Drive started (TODO)", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Log.d("SettingsDialog", "Google Drive Backup disabled")
+                                Toast.makeText(context, "Background sync disabled", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                }
+
+                Button(onClick = {
+                    exportLauncher.launch("health_tracker_data.zip")
+                }) {
+                    Text("Export to CSV")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    onDismissRequest()
+                }) {
+                    Text("Import from CSV")
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("App info", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = appPackageName,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
+                )
+                Text("version: $appVersion", style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "GitHub link",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.clickable { uriHandler.openUri(githubLink) }
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("Made with 💖 in 🇪🇺", style = MaterialTheme.typography.bodySmall)
+
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
+    Log.d("Export CSV", "exportDataToCSVZip function CALLED. Destination URI: $destinationUri")
+
+    val filesDir = context.getExternalFilesDir(null) // Directory for CSV files
+    val filesToZip = filesDir?.listFiles()
+
+    if (filesToZip == null || filesToZip.isEmpty()) {
+        Log.d("Export CSV", "No CSV files to export found in directory: ${filesDir?.absolutePath}")
+        Toast.makeText(context, "No data to export.", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    Log.d("Export CSV", "Found ${filesToZip.size} items in directory: ${filesDir.absolutePath}")
+
+    try {
+        context.contentResolver.openOutputStream(destinationUri)?.use { outputStream ->
+            ZipOutputStream(outputStream).use { zipOutputStream ->
+                filesToZip.forEach { file ->
+                    Log.d("Export CSV", "Processing item: ${file.name}, isFile: ${file.isFile}")
+                    if (file.isFile && file.name.endsWith(".csv")) {
+                        Log.d("Export CSV", "Zipping CSV file: ${file.name}")
+                        val entry = ZipEntry(file.name)
+                        zipOutputStream.putNextEntry(entry)
+                        try {
+                            file.inputStream().use { inputStream ->
+                                inputStream.copyTo(zipOutputStream)
+                            }
+                            zipOutputStream.closeEntry()
+                            Log.d("Export CSV", "File zipped successfully: ${file.name}")
+                        } catch (e: Exception) {
+                            Log.e("Export CSV", "Error zipping file ${file.name}", e)
+                        }
+                    } else {
+                        Log.d("Export CSV", "Skipping non-CSV file: ${file.name}")
+                    }
+                }
+            }
+        }
+        Toast.makeText(context, "Data exported to CSV zip successfully!", Toast.LENGTH_SHORT).show()
+        Log.d("Export CSV", "Data exported to zip: $destinationUri")
+
+    } catch (e: Exception) {
+        Log.e("Export CSV", "Error exporting data to CSV zip", e)
+        Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -346,7 +582,7 @@ fun ExerciseCounter(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onDecrement) {
-                Icon(imageVector = Icons.Default.Delete, contentDescription = "Minus One")
+                Icon(imageVector = Icons.Default.Remove, contentDescription = "Minus One")
             }
             Text("$count", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 8.dp))
             IconButton(onClick = onIncrement) {
@@ -585,7 +821,7 @@ fun MedicationItemRow(
         // Dosage counter with value shown between decrement and increment buttons.
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             IconButton(onClick = { onDecrement() }) {
-                Icon(imageVector = Icons.Filled.Delete, contentDescription = "Decrease dosage")
+                Icon(imageVector = Icons.Filled.Remove, contentDescription = "Decrease dosage")
             }
             Text(
                 text = "${medication.dosage} ${medication.unit}",
@@ -1056,10 +1292,4 @@ fun TextInputField(
             .fillMaxWidth()
             .padding(8.dp)
     )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun PreviewHealthTrackerScreen() {
-    HealthTrackerApp()
 }
