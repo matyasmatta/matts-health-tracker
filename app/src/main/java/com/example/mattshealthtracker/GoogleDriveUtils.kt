@@ -12,7 +12,6 @@ import androidx.activity.result.ActivityResultCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
@@ -38,6 +37,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import java.text.SimpleDateFormat
 
 object GoogleDriveUtils {
 
@@ -107,6 +107,10 @@ object GoogleDriveUtils {
         val filesDir = context.getExternalFilesDir(null)
         val filesToZip = filesDir?.listFiles()
 
+        // Get the current UTC timestamp
+        val timestamp = AppGlobals.getUtcTimestamp()
+        val zipFileName = "mht-backup-$timestamp.zip"
+
         if (filesToZip.isNullOrEmpty()) {
             Log.d("Export CSV", "No CSV files found in: ${filesDir?.absolutePath}")
             withContext(Dispatchers.Main) {
@@ -116,7 +120,7 @@ object GoogleDriveUtils {
         }
 
         Log.d("Export CSV", "Found ${filesToZip.size} files in: ${filesDir.absolutePath}")
-        val zipFile = JavaFile(context.cacheDir, "exported_data.zip")
+        val zipFile = JavaFile(context.cacheDir, zipFileName)
         try {
             FileOutputStream(zipFile).use { fos ->
                 ZipOutputStream(fos).use { zos ->

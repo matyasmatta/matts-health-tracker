@@ -34,4 +34,11 @@ object AppGlobals {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
         openedDay = sdf.format(Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant()))
     }
+
+    // Function to get a UTC timestamp formatted as "yyyyMMddHHmmss"
+    fun getUtcTimestamp(): String {
+        val sdf = SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault())
+        sdf.timeZone = TimeZone.getTimeZone("UTC") // Set timezone to UTC
+        return sdf.format(Date())
+    }
 }

@@ -12,10 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -25,9 +22,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import android.content.Context
 import android.net.Uri
-import androidx.compose.material.icons.filled.Delete
 import com.example.mattshealthtracker.ui.theme.MattsHealthTrackerTheme
-import com.example.mattshealthtracker.AppGlobals
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.clickable
@@ -54,16 +49,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.window.Dialog
 import kotlin.math.abs
-import com.example.mattshealthtracker.BuildConfig // Import BuildConfig
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
-import java.io.File
-import java.io.FileOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.example.mattshealthtracker.GoogleDriveUtils
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount // Import GoogleSignInAccount
 import androidx.compose.runtime.rememberCoroutineScope
@@ -403,7 +393,7 @@ fun SettingsDialog(
                 }
 
                 Button(onClick = {
-                    exportLauncher.launch("health_tracker_data.zip")
+                    exportLauncher.launch("mht-backup-${AppGlobals.getUtcTimestamp()}.zip")
                 }) {
                     Text("Export to CSV")
                 }
@@ -456,6 +446,10 @@ private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
 
     Log.d("Export CSV", "Found ${filesToZip.size} items in directory: ${filesDir.absolutePath}")
 
+    // Use the utility function to get the UTC timestamp
+    val timestamp = AppGlobals.getUtcTimestamp()
+    val zipFileName = "mht-backup-$timestamp.zip"
+
     try {
         context.contentResolver.openOutputStream(destinationUri)?.use { outputStream ->
             ZipOutputStream(outputStream).use { zipOutputStream ->
@@ -480,7 +474,7 @@ private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
                 }
             }
         }
-        Toast.makeText(context, "Data exported to CSV zip successfully!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Data exported to CSV zip successfully! File: $zipFileName", Toast.LENGTH_SHORT).show()
         Log.d("Export CSV", "Data exported to zip: $destinationUri")
 
     } catch (e: Exception) {
