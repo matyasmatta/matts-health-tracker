@@ -600,90 +600,33 @@ fun MedicationScreen(openedDay: String) {
     val context = LocalContext.current
     val dbHelper = NewMedicationDatabaseHelper(context)
 
-    // Default medication list.
-    val defaultMedications = listOf(
-        MedicationItem("amitriptyline", 0f, 6.25f, "mg"),
-        MedicationItem("inosine pranobex", 0f, 500f, "mg"),
-        MedicationItem("paracetamol", 0f, 250f, "mg"),
-        MedicationItem("ibuprofen", 0f, 200f, "mg"),
-        MedicationItem("vitamin D", 0f, 500f, "IU"),
-        MedicationItem("bisulepine", 0f, 1f, "mg"),
-        MedicationItem("cetirizine", 0f, 5f, "mg"),
-        MedicationItem("doxycycline", 0f, 100f, "mg"),
-        MedicationItem("corticosteroids", 0f, 5f, "mg-eq")
-    )
-
-    // Mutable state for the medications list.
     val medications = remember { mutableStateListOf<MedicationItem>() }
-    // Side effects state.
     var sideEffects by remember { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
 
     // Load initial data when openedDay changes.
     LaunchedEffect(openedDay) {
-        val fetchedMedications = dbHelper.fetchMedicationItemsForDate(openedDay)
-
-        if (fetchedMedications.isNotEmpty() && fetchedMedications.any { it.isStarred }) {
-            // If there are starred medications for the current day, use them.
-            medications.clear()
-            medications.addAll(fetchedMedications)
-        } else if (fetchedMedications.isNotEmpty() && !fetchedMedications.any { it.isStarred }) {
-            // If no starred medications for the current day, fetch starred items from previous day
-            val currentDate = LocalDate.parse(openedDay)
-            val previousDate = currentDate.minusDays(1)
-            val previousDay = previousDate.toString()
-            val previousDayMedications = dbHelper.fetchMedicationItemsForDate(previousDay)
-
-            if (previousDayMedications.isNotEmpty()) {
-                val previousStarredMedicationNames = previousDayMedications
-                    .filter { it.isStarred }
-                    .map { it.name }
-
-                val updatedMedications = fetchedMedications.map { currentDayMedication ->
-                    if (previousStarredMedicationNames.contains(currentDayMedication.name)) {
-                        currentDayMedication.copy(isStarred = true)
-                    } else {
-                        currentDayMedication
-                    }
-                }
-                medications.clear()
-                medications.addAll(updatedMedications)
-                dbHelper.insertOrUpdateMedicationList(openedDay, updatedMedications) // Save updated list with starred items
-            } else {
-                // If no medications for the previous day, keep current day as it is (no starring from prev day)
-                medications.clear()
-                medications.addAll(fetchedMedications) // Keep current day's fetched medications (could be defaults or empty with user edits)
-            }
-        } else {
-            // If no medications fetched for the current day, use default medications.
-            medications.clear()
-            medications.addAll(defaultMedications)
-            dbHelper.insertOrUpdateMedicationList(openedDay, defaultMedications)
-        }
-
-        val dbSideEffects = dbHelper.fetchSideEffectsForDate(openedDay)
-        sideEffects = dbSideEffects ?: ""
+        val fetchedMedications = dbHelper.fetchMedicationItemsForDateWithDefaults(openedDay)
+        medications.clear()
+        medications.addAll(fetchedMedications)
+        dbHelper.insertOrUpdateMedicationList(openedDay, fetchedMedications)
+        sideEffects = dbHelper.fetchSideEffectsForDate(openedDay) ?: ""
     }
 
-    // State controlling whether non-starred medications are expanded.
-    var expanded by remember { mutableStateOf(false) }
-
-    // Helper function to update a medication in the list.
-    fun updateMedication(medication: MedicationItem, newMedication: MedicationItem) {
-        val index = medications.indexOf(medication)
-        if (index != -1) {
-            medications[index] = newMedication
-        }
-        dbHelper.exportToCSV(context)
-    }
-
-    // Save the current medication list and side effects to the database.
     fun saveMedicationData() {
         dbHelper.insertOrUpdateMedicationList(openedDay, medications.toList())
         dbHelper.insertOrUpdateSideEffects(openedDay, sideEffects)
         dbHelper.exportToCSV(context)
     }
 
-    // Derive starred and non-starred lists.
+    fun updateMedication(medication: MedicationItem, newMedication: MedicationItem) {
+        val index = medications.indexOf(medication)
+        if (index != -1) {
+            medications[index] = newMedication
+            saveMedicationData()
+        }
+    }
+
     val starredMedications = medications.filter { it.isStarred }
     val nonStarredMedications = medications.filter { !it.isStarred }
 
@@ -698,30 +641,25 @@ fun MedicationScreen(openedDay: String) {
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // Display starred medications at the top.
         starredMedications.forEach { medication ->
             MedicationItemRow(
                 medication = medication,
                 onIncrement = {
                     updateMedication(medication, medication.copy(dosage = medication.dosage + medication.step))
-                    saveMedicationData()
                 },
                 onDecrement = {
                     if (medication.dosage - medication.step >= 0)
                         updateMedication(medication, medication.copy(dosage = medication.dosage - medication.step))
-                    saveMedicationData()
                 },
                 onToggleStar = {
                     updateMedication(medication, medication.copy(isStarred = !medication.isStarred))
-                    saveMedicationData()
                 }
             )
             Spacer(modifier = Modifier.height(2.dp))
         }
 
-        // Expand/collapse header for non-starred medications.
         Row(
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { expanded = !expanded }
@@ -734,11 +672,10 @@ fun MedicationScreen(openedDay: String) {
             )
             Icon(
                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "Collapse" else "Expand"
+                contentDescription = null
             )
         }
 
-        // Display non-starred medications if expanded.
         if (expanded) {
             LazyColumn {
                 items(nonStarredMedications) { medication ->
@@ -746,16 +683,13 @@ fun MedicationScreen(openedDay: String) {
                         medication = medication,
                         onIncrement = {
                             updateMedication(medication, medication.copy(dosage = medication.dosage + medication.step))
-                            saveMedicationData()
                         },
                         onDecrement = {
                             if (medication.dosage - medication.step >= 0)
                                 updateMedication(medication, medication.copy(dosage = medication.dosage - medication.step))
-                            saveMedicationData()
                         },
                         onToggleStar = {
                             updateMedication(medication, medication.copy(isStarred = !medication.isStarred))
-                            saveMedicationData()
                         }
                     )
                     Divider()
@@ -763,7 +697,6 @@ fun MedicationScreen(openedDay: String) {
             }
         }
 
-        // Side effects section.
         Spacer(modifier = Modifier.height(40.dp))
         Text(
             text = "Side effects",

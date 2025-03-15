@@ -130,7 +130,8 @@ class NewMedicationDatabaseHelper(context: Context) :
                     "bisulepine" to Pair(1f, "mg"),
                     "cetirizine" to Pair(5f, "mg"),
                     "doxycycline" to Pair(100f, "mg"),
-                    "corticosteroids" to Pair(5f, "mg-eq")
+                    "corticosteroids" to Pair(5f, "mg-eq"),
+                    "magnesium glycinate" to Pair(500f, "mg")
                 )
                 val (step, unit) = defaultMapping[name] ?: Pair(0f, "")
                 items.add(MedicationItem(name, dosage, step, unit, isStarred))
@@ -140,6 +141,47 @@ class NewMedicationDatabaseHelper(context: Context) :
         db.close()
         return items
     }
+
+    fun fetchMedicationItemsForDateWithDefaults(date: String): List<MedicationItem> {
+        val fetchedMedications = fetchMedicationItemsForDate(date)
+
+        if (fetchedMedications.isNotEmpty()) {
+            return mergeWithDefaults(fetchedMedications)
+        }
+
+        // If no medications found for the date, check previous day
+        val previousDate = AppGlobals.getOpenedDayAsLocalDate().minusDays(1).toString()
+        val previousDayMedications = fetchMedicationItemsForDate(previousDate)
+
+        return if (previousDayMedications.isNotEmpty()) {
+            // Carry over starred items and merge with defaults
+            mergeWithDefaults(previousDayMedications.map { it.copy(isStarred = true) })
+        } else {
+            // No previous data, just return defaults
+            defaultMedications
+        }
+    }
+
+    // Helper function to merge fetched meds with default meds
+    private fun mergeWithDefaults(fetched: List<MedicationItem>): List<MedicationItem> {
+        val fetchedNames = fetched.map { it.name }.toSet()
+        val missingDefaults = defaultMedications.filter { it.name !in fetchedNames }
+        return fetched + missingDefaults
+    }
+
+    // Default medication list (moved inside the helper)
+    private val defaultMedications = listOf(
+        MedicationItem("amitriptyline", 0f, 6.25f, "mg"),
+        MedicationItem("inosine pranobex", 0f, 500f, "mg"),
+        MedicationItem("paracetamol", 0f, 250f, "mg"),
+        MedicationItem("ibuprofen", 0f, 200f, "mg"),
+        MedicationItem("vitamin D", 0f, 500f, "IU"),
+        MedicationItem("bisulepine", 0f, 1f, "mg"),
+        MedicationItem("cetirizine", 0f, 5f, "mg"),
+        MedicationItem("doxycycline", 0f, 100f, "mg"),
+        MedicationItem("corticosteroids", 0f, 5f, "mg-eq"),
+        MedicationItem("magnesium glycinate", 0f, 500f, "mg")
+    )
 
     // Inserts or updates side effects for a given date.
     fun insertOrUpdateSideEffects(date: String, sideEffects: String) {
