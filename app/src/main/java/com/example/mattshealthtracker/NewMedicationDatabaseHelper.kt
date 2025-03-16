@@ -154,8 +154,11 @@ class NewMedicationDatabaseHelper(context: Context) :
         val previousDayMedications = fetchMedicationItemsForDate(previousDate)
 
         return if (previousDayMedications.isNotEmpty()) {
-            // Carry over starred items and merge with defaults
-            mergeWithDefaults(previousDayMedications.map { it.copy(isStarred = true) })
+            // Carry over starred items and merge with defaults, but set dosage to 0
+            val resetMedications = previousDayMedications.map {
+                it.copy(dosage = 0f) // Reset dosage to 0
+            }
+            mergeWithDefaults(resetMedications)
         } else {
             // No previous data, just return defaults
             defaultMedications
