@@ -144,8 +144,10 @@ class NewMedicationDatabaseHelper(context: Context) :
 
     fun fetchMedicationItemsForDateWithDefaults(date: String): List<MedicationItem> {
         val fetchedMedications = fetchMedicationItemsForDate(date)
+        Log.d("NewMedicationDatabaseHelper", "Fetching items for data with defaults for ${date}.")
 
         if (fetchedMedications.isNotEmpty()) {
+            Log.d("NewMedicationDatabaseHelper", "Found medication data for the day ${date}.")
             return mergeWithDefaults(fetchedMedications)
         }
 
@@ -154,6 +156,7 @@ class NewMedicationDatabaseHelper(context: Context) :
         val previousDayMedications = fetchMedicationItemsForDate(previousDate)
 
         return if (previousDayMedications.isNotEmpty()) {
+            Log.d("NewMedicationDatabaseHelper", "Found medication data for the day $date from previous day $previousDate.")
             // Carry over starred items and merge with defaults, but set dosage to 0
             val resetMedications = previousDayMedications.map {
                 it.copy(dosage = 0f) // Reset dosage to 0
@@ -161,6 +164,7 @@ class NewMedicationDatabaseHelper(context: Context) :
             mergeWithDefaults(resetMedications)
         } else {
             // No previous data, just return defaults
+            Log.d("NewMedicationDatabaseHelper", "Found no medication data even for previous day ${previousDate}.")
             defaultMedications
         }
     }
