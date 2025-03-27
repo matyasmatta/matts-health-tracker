@@ -9,8 +9,6 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.*
 
 class NewMedicationDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
@@ -131,7 +129,10 @@ class NewMedicationDatabaseHelper(context: Context) :
                     "cetirizine" to Pair(5f, "mg"),
                     "doxycycline" to Pair(100f, "mg"),
                     "corticosteroids" to Pair(5f, "mg-eq"),
-                    "magnesium glycinate" to Pair(500f, "mg")
+                    "magnesium glycinate" to Pair(500f, "mg"),
+                    "ketotifen" to Pair(0.5f, "mg"),
+                    "desloratidine" to Pair(2.5f, "mg"),
+                    "omeprazol" to Pair(10f, "mg"),
                 )
                 val (step, unit) = defaultMapping[name] ?: Pair(0f, "")
                 items.add(MedicationItem(name, dosage, step, unit, isStarred))
@@ -187,7 +188,10 @@ class NewMedicationDatabaseHelper(context: Context) :
         MedicationItem("cetirizine", 0f, 5f, "mg"),
         MedicationItem("doxycycline", 0f, 100f, "mg"),
         MedicationItem("corticosteroids", 0f, 5f, "mg-eq"),
-        MedicationItem("magnesium glycinate", 0f, 500f, "mg")
+        MedicationItem("magnesium glycinate", 0f, 500f, "mg"),
+        MedicationItem("ketotifen", 0f, 0.5f, "mg"),
+        MedicationItem("desloratidine", 0f, 2.5f, "mg"),
+        MedicationItem("omeprazol", 0f, 10f, "mg"),
     )
 
     // Inserts or updates side effects for a given date.
