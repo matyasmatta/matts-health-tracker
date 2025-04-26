@@ -133,6 +133,9 @@ class NewMedicationDatabaseHelper(context: Context) :
                     "ketotifen" to Pair(0.5f, "mg"),
                     "desloratidine" to Pair(2.5f, "mg"),
                     "omeprazol" to Pair(10f, "mg"),
+                    "pantoprazol" to Pair(40f, "mg"),
+                    "itopride" to Pair(50f, "mg"),
+                    "alginate" to Pair(1f, "pack"),
                 )
                 val (step, unit) = defaultMapping[name] ?: Pair(0f, "")
                 items.add(MedicationItem(name, dosage, step, unit, isStarred))
@@ -192,6 +195,9 @@ class NewMedicationDatabaseHelper(context: Context) :
         MedicationItem("ketotifen", 0f, 0.5f, "mg"),
         MedicationItem("desloratidine", 0f, 2.5f, "mg"),
         MedicationItem("omeprazol", 0f, 10f, "mg"),
+        MedicationItem("pantoprazol", 0f, 40f, "mg"),
+        MedicationItem("itopride", 0f, 50f, "mg"),
+        MedicationItem("alginate", 0f, 1f, "pack")
     )
 
     // Inserts or updates side effects for a given date.
