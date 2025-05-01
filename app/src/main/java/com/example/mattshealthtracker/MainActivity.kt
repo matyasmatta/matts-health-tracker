@@ -535,6 +535,7 @@ fun ExercisesScreen(openedDay: String) {
         )
         routineDbHelper.insertOrUpdateRoutineData(openedDay, dataToSave)
         Log.d("ExercisesScreen", "Updated routine data for $openedDay: $dataToSave")
+        routineDbHelper.exportToCSV(context)
     }
 
     Column(

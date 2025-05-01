@@ -6,9 +6,19 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileWriter
+import java.io.IOException
 
 class RoutineDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+
+    private val context: Context // Hold the context for file operations
+
+    init {
+        this.context = context
+    }
 
     companion object {
         const val DATABASE_NAME = "routine_tracker.db"
@@ -152,6 +162,40 @@ class RoutineDatabaseHelper(context: Context) :
             Log.e("RoutineDB", "Error updating routine data for $date: ${e.message}")
         } finally {
             db.endTransaction()
+            db.close()
+        }
+    }
+
+    fun exportToCSV(context: Context) {
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_NAME,
+            arrayOf(COLUMN_DATE, COLUMN_EXERCISE, COLUMN_IS_CHECKED, COLUMN_AM_PM),
+            null, null, null, null, null
+        )
+        val fileName = "routine_data.csv"
+        try {
+            // Use getExternalFilesDir instead of filesDir
+            val file = File(context.getExternalFilesDir(null), fileName)
+            val writer = BufferedWriter(FileWriter(file))
+
+            // Write header
+            writer.write("Date,Exercise,Is Checked,AM/PM\n")
+
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val date = it.getString(it.getColumnIndexOrThrow(COLUMN_DATE))
+                    val exercise = it.getString(it.getColumnIndexOrThrow(COLUMN_EXERCISE))
+                    val isChecked = it.getInt(it.getColumnIndexOrThrow(COLUMN_IS_CHECKED))
+                    val amPm = it.getString(it.getColumnIndexOrThrow(COLUMN_AM_PM))
+                    writer.write("$date,$exercise,$isChecked,$amPm\n")
+                }
+            }
+            writer.close()
+            Log.d("CSVExport", "Exported data to ${file.absolutePath}")
+        } catch (e: IOException) {
+            Log.e("CSVExportError", "Error exporting data to CSV: ${e.message}")
+        } finally {
             db.close()
         }
     }
