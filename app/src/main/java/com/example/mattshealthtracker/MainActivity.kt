@@ -54,6 +54,8 @@ import androidx.compose.ui.text.font.FontFamily
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount // Import GoogleSignInAccount
 import androidx.compose.runtime.rememberCoroutineScope
@@ -486,25 +488,35 @@ private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
 @Composable
 fun ExercisesScreen(openedDay: String) {
     val context = LocalContext.current
-    val dbhelper = remember { ExerciseDatabaseHelper(context) }
+    val exerciseDbHelper = remember { ExerciseDatabaseHelper(context) }
+    val routineDbHelper = remember { RoutineDatabaseHelper(context) }
     DisposableEffect(Unit) {
-        onDispose { dbhelper.close() }
+        onDispose {
+            exerciseDbHelper.close()
+            routineDbHelper.close()
+        }
     }
 
-    // Fetch data dynamically whenever `openedDay` changes
-    val exerciseData = dbhelper.fetchExerciseDataForDate(openedDay) ?: ExerciseData(
+    val exerciseData = exerciseDbHelper.fetchExerciseDataForDate(openedDay) ?: ExerciseData(
         currentDate = openedDay,
         pushups = 0,
         posture = 0
     )
 
-    // Store state for counters, initialized with `exerciseData`
     var pushUps by remember(openedDay) { mutableStateOf(exerciseData.pushups) }
     var postureCorrections by remember(openedDay) { mutableStateOf(exerciseData.posture) }
 
-    // Helper function to update the database
-    fun updateData() {
-        dbhelper.insertOrUpdateData(
+    // Fetch routine data
+    val routineData = remember(openedDay) {
+        routineDbHelper.getRoutineDataForDate(openedDay)
+    }
+
+    // State to hold the checked states, initialized with data from the database
+    val morningChecks = remember(openedDay) { mutableStateOf(routineData["am"] ?: emptyMap()) }
+    val eveningChecks = remember(openedDay) { mutableStateOf(routineData["pm"] ?: emptyMap()) }
+
+    fun updateExerciseData() {
+        exerciseDbHelper.insertOrUpdateData(
             ExerciseData(
                 currentDate = openedDay,
                 pushups = pushUps,
@@ -512,30 +524,37 @@ fun ExercisesScreen(openedDay: String) {
             )
         )
         Log.d("ExercisesScreen", "Updated exercise data: Pushups=$pushUps, Posture=$postureCorrections")
-        dbhelper.exportToCSV(context)
+        exerciseDbHelper.exportToCSV(context)
     }
 
-    Log.d("ExercisesScreen", "Recomposing for openedDay=$openedDay, Pushups=$pushUps, Posture=$postureCorrections")
+    // Function to update routine data in the database
+    fun updateRoutineData() {
+        val dataToSave = mapOf(
+            "am" to morningChecks.value,
+            "pm" to eveningChecks.value
+        )
+        routineDbHelper.insertOrUpdateRoutineData(openedDay, dataToSave)
+        Log.d("ExercisesScreen", "Updated routine data for $openedDay: $dataToSave")
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Text("Exercise Tracker", style = MaterialTheme.typography.titleLarge)
-
         ExerciseCounter(
             label = "Push-Ups",
             count = pushUps,
             onIncrement = {
                 pushUps += 5
-                updateData()
+                updateExerciseData()
             },
             onDecrement = {
                 if (pushUps > 0) {
                     pushUps--
-                    updateData()
+                    updateExerciseData()
                 }
             }
         )
@@ -545,18 +564,34 @@ fun ExercisesScreen(openedDay: String) {
             count = postureCorrections,
             onIncrement = {
                 postureCorrections++
-                updateData()
+                updateExerciseData()
             },
             onDecrement = {
                 if (postureCorrections > 0) {
                     postureCorrections--
-                    updateData()
+                    updateExerciseData()
                 }
+            }
+        )
+
+        Divider(modifier = Modifier.padding(vertical = 16.dp))
+
+        RoutineChecklist(
+            dbHelper = routineDbHelper,
+            date = openedDay,
+            morningChecks = morningChecks,
+            eveningChecks = eveningChecks,
+            onMorningCheckChange = { newChecks ->
+                morningChecks.value = newChecks
+                updateRoutineData() // Save to DB whenever morning checks change
+            },
+            onEveningCheckChange = { newChecks ->
+                eveningChecks.value = newChecks
+                updateRoutineData() // Save to DB whenever evening checks change
             }
         )
     }
 }
-
 
 @Composable
 fun ExerciseCounter(
@@ -583,6 +618,303 @@ fun ExerciseCounter(
                 Icon(imageVector = Icons.Default.Add, contentDescription = "Plus One")
             }
         }
+    }
+}
+
+@Composable
+fun RoutineChecklist(
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    morningChecks: MutableState<Map<String, Boolean>>,
+    eveningChecks: MutableState<Map<String, Boolean>>,
+    onMorningCheckChange: (Map<String, Boolean>) -> Unit,
+    onEveningCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    var morningExpanded by remember { mutableStateOf(false) }
+    var eveningExpanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ExpandableRoutineSection(
+            title = "☀️  Morning Routine",
+            expanded = morningExpanded,
+            onExpand = { morningExpanded = !morningExpanded },
+            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
+            content = {
+                PostureChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "am",
+                    checks = morningChecks,
+                    onCheckChange = onMorningCheckChange
+                )
+                TMJReleaseChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "am",
+                    checks = morningChecks,
+                    onCheckChange = onMorningCheckChange
+                )
+                NeckStrengtheningStretchingChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "am",
+                    checks = morningChecks,
+                    onCheckChange = onMorningCheckChange
+                )
+                VagusNerveDestressingChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "am",
+                    checks = morningChecks,
+                    onCheckChange = onMorningCheckChange
+                )
+            }
+        )
+
+        ExpandableRoutineSection(
+            title = "🌙  Evening Routine",
+            expanded = eveningExpanded,
+            onExpand = { eveningExpanded = !eveningExpanded },
+            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
+            content = {
+                PostureChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "pm",
+                    checks = eveningChecks,
+                    onCheckChange = onEveningCheckChange
+                )
+                TMJReleaseChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "pm",
+                    checks = eveningChecks,
+                    onCheckChange = onEveningCheckChange
+                )
+                NeckStrengtheningStretchingChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "pm",
+                    checks = eveningChecks,
+                    onCheckChange = onEveningCheckChange
+                )
+                VagusNerveDestressingChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "pm",
+                    checks = eveningChecks,
+                    onCheckChange = onEveningCheckChange
+                )
+            }
+        )
+    }
+}
+
+@Composable
+fun ExpandableRoutineSection(
+    title: String,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    content: @Composable () -> Unit,
+    contentPadding: PaddingValues = PaddingValues(all = 8.dp)
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .padding(contentPadding)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            IconButton(onClick = onExpand) {
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand"
+                )
+            }
+        }
+        if (expanded) {
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+fun PostureChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Wall angels: Palms on ears, slide down along the body like snow angels — 10 reps",
+        "Ladder climb: Reach one arm up, then the other, as if climbing a ladder — 10 reps",
+        "Wing flaps: Arms out like wings, rotate forward and backward — 10 reps",
+        "Scapular retractions: Squeeze shoulder blades back & down — hold 5 sec, repeat 10x"
+    )
+    Text("🧍‍♂️ Posture Exercises (Repeat 3x whole set)", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false, // Get isChecked from the map
+                onCheckedChange = { isChecked ->
+                    // Update the map when the checkbox changes
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks) // Notify the parent
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun TMJReleaseChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Side pressure: Gently press your jaw from left and right using your hand — 5 seconds each side, 3x",
+        "Jaw opening: Place two fingers on lower front teeth, gently pull down — 5 seconds, 3x",
+        "Gentle massage (optional): Use fingers to massage the masseter (cheek) and temples for 30 seconds each side",
+        "Jaw wiggles: Gently move jaw side to side — 10x to loosen tension"
+    )
+    Text("😬 TMJ Release Exercises", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun NeckStrengtheningStretchingChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Chin tucks: Pull head straight back (like making a double chin) — hold 5 sec, repeat 3x",
+        "Tilt head left, hold 10–15 sec",
+        "Tilt head right, hold 10–15 sec",
+        "Gentle half circles — 3x each direction",
+        "Isometric holds: Push head gently into hand in each direction (front, back, left, right) — 5 sec each, 1x daily"
+    )
+    Text("🧠 Neck Strengthening & Stretching", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun VagusNerveDestressingChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Child’s Pose: Kneel, fold forward, arms stretched — 30–60 sec",
+        "Cobra Stretch: Lie on belly, lift chest with arms — 10–15 sec, 2x",
+        "Lie or sit comfortably",
+        "Inhale through nose for 4 sec, feel belly rise",
+        "Exhale slowly for 6–8 sec",
+        "Repeat for 5–10 breaths",
+        "Humming, low and relaxed — 1 min"
+    )
+    Text("🫁 Vagus Nerve & Destressing Moves", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun CheckboxItem(
+    label: String,
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    isChecked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    var checkedState by remember { mutableStateOf(isChecked) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Checkbox(
+            checked = checkedState,
+            onCheckedChange = { newChecked ->
+                checkedState = newChecked
+                onCheckedChange(newChecked)
+            }
+        )
+        Text(label, style = MaterialTheme.typography.bodySmall)
     }
 }
 
