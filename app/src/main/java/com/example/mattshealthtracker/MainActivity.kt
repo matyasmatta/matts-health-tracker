@@ -628,10 +628,11 @@ fun RoutineChecklist(
     morningChecks: MutableState<Map<String, Boolean>>,
     eveningChecks: MutableState<Map<String, Boolean>>,
     onMorningCheckChange: (Map<String, Boolean>) -> Unit,
-    onEveningCheckChange: (Map<String, Boolean>) -> Unit
+    onEveningCheckChange: (Map<String, Boolean>) -> Unit  // Added evening callback
 ) {
-    var morningExpanded by remember { mutableStateOf(false) }
-    var eveningExpanded by remember { mutableStateOf(false) }
+    // Use rememberSaveable to survive configuration changes, and reset when date changes
+    var morningExpanded by rememberSaveable(date) { mutableStateOf(false) }
+    var eveningExpanded by rememberSaveable(date) { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ExpandableRoutineSection(
