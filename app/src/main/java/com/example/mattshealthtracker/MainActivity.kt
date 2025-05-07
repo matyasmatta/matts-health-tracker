@@ -1600,6 +1600,7 @@ fun MiscellaneousTrackers(
         miscellaneousItems = updatedList // Update local state
         // Trigger a database save for the entire list
         miscellaneousDbHelper.insertOrUpdateMiscellaneousItems(date, updatedList)
+        miscellaneousDbHelper.exportToCSV() // Export to CSV after save
     }
 
     Column(modifier = Modifier.padding(start = 0.dp)) { // Add some leading space
