@@ -54,11 +54,16 @@ import androidx.compose.ui.text.font.FontFamily
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount // Import GoogleSignInAccount
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextDecoration
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -629,11 +634,24 @@ fun RoutineChecklist(
     morningChecks: MutableState<Map<String, Boolean>>,
     eveningChecks: MutableState<Map<String, Boolean>>,
     onMorningCheckChange: (Map<String, Boolean>) -> Unit,
-    onEveningCheckChange: (Map<String, Boolean>) -> Unit  // Added evening callback
+    onEveningCheckChange: (Map<String, Boolean>) -> Unit
 ) {
     // Use rememberSaveable to survive configuration changes, and reset when date changes
     var morningExpanded by rememberSaveable(date) { mutableStateOf(false) }
     var eveningExpanded by rememberSaveable(date) { mutableStateOf(false) }
+
+    // Calculate completed exercises by checking the state in the maps
+    val completedMorningExercises = morningChecks.value.count { it.value }
+    val completedEveningExercises = eveningChecks.value.count { it.value }
+
+    // Define total exercises for each routine (adjust if your routine structure changes)
+    val totalMorningExercises = 19
+    val totalEveningExercises = 22
+
+    // Define estimated total minutes for each routine (manual estimate)
+    val estimatedMorningMinutes = 15 // Adjust this based on your estimate
+    val estimatedEveningMinutes = 20 // Adjust this based on your estimate
+
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ExpandableRoutineSection(
@@ -641,6 +659,9 @@ fun RoutineChecklist(
             expanded = morningExpanded,
             onExpand = { morningExpanded = !morningExpanded },
             contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
+            totalExercises = totalMorningExercises, // Pass total exercises
+            completedExercises = completedMorningExercises, // Pass completed exercises
+            totalMinutes = estimatedMorningMinutes, // Pass estimated minutes
             content = {
                 PostureChecklist(
                     innerPadding = PaddingValues(vertical = 8.dp),
@@ -666,7 +687,15 @@ fun RoutineChecklist(
                     checks = morningChecks,
                     onCheckChange = onMorningCheckChange
                 )
-                VagusNerveDestressingChecklist(
+                MorningJournallingChecklist(
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "am",
+                    checks = morningChecks,
+                    onCheckChange = onMorningCheckChange
+                )
+                MorningStretchesChecklist(
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
                     date = date,
@@ -682,8 +711,11 @@ fun RoutineChecklist(
             expanded = eveningExpanded,
             onExpand = { eveningExpanded = !eveningExpanded },
             contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 8.dp),
+            totalExercises = totalEveningExercises, // Pass total exercises
+            completedExercises = completedEveningExercises, // Pass completed exercises
+            totalMinutes = estimatedEveningMinutes, // Pass estimated minutes
             content = {
-                PostureChecklist(
+                PostureChecklist( // Assuming Posture Checklist is also in the evening
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
                     date = date,
@@ -691,7 +723,7 @@ fun RoutineChecklist(
                     checks = eveningChecks,
                     onCheckChange = onEveningCheckChange
                 )
-                TMJReleaseChecklist(
+                TMJReleaseChecklist( // Assuming TMJ Release is also in the evening
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
                     date = date,
@@ -699,7 +731,15 @@ fun RoutineChecklist(
                     checks = eveningChecks,
                     onCheckChange = onEveningCheckChange
                 )
-                NeckStrengtheningStretchingChecklist(
+                NeckStrengtheningStretchingChecklist( // Assuming Neck exercises are also in the evening
+                    innerPadding = PaddingValues(vertical = 8.dp),
+                    dbHelper = dbHelper,
+                    date = date,
+                    amPm = "pm",
+                    checks = eveningChecks,
+                    onCheckChange = onEveningCheckChange
+                )
+                EveningJournallingChecklist(
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
                     date = date,
@@ -726,25 +766,59 @@ fun ExpandableRoutineSection(
     expanded: Boolean,
     onExpand: () -> Unit,
     content: @Composable () -> Unit,
-    contentPadding: PaddingValues = PaddingValues(all = 8.dp)
+    contentPadding: PaddingValues = PaddingValues(all = 8.dp),
+    totalExercises: Int, // Added parameter for total exercises
+    completedExercises: Int, // Added parameter for completed exercises
+    totalMinutes: Int // Added parameter for total estimated minutes
 ) {
+    // Determine if the routine is completed
+    val isCompleted = completedExercises > 0 && completedExercises == totalExercises
+
+    val leftMinutes = if (totalExercises > 0) {
+        val remainingProportion = (totalExercises - completedExercises).toFloat() / totalExercises.toFloat()
+        (totalMinutes * remainingProportion).roundToInt() // Use roundToInt for a cleaner minute value
+    } else {
+        0 // Handle the case of zero total exercises to avoid division by zero
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
             .padding(contentPadding)
+            .animateContentSize(animationSpec = tween(durationMillis = 300, easing = LinearEasing)) // Animation for expand/collapse
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            IconButton(onClick = onExpand) {
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse" else "Expand"
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    // Apply strike-through and grey color if completed
+                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                    color = if (isCompleted) Color.Gray else LocalContentColor.current
                 )
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Display the exercise count and estimated time
+                val exercisesText = "$completedExercises/$totalExercises exercises"
+                val timeText = "~$leftMinutes min"
+
+                Text(
+                    "$exercisesText, $timeText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+
+                IconButton(onClick = onExpand) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse" else "Expand"
+                    )
+                }
             }
         }
         if (expanded) {
@@ -788,6 +862,105 @@ fun PostureChecklist(
         }
     }
 }
+
+@Composable
+fun MorningJournallingChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Daylio Check-Up: Open the beautiful template and write how you're feeling and what you're sensing",
+        "Sleep Tracking: If you haven't done so, update this nights sleep data"
+    )
+    Text("✍️ Mental Processing", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun EveningJournallingChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Daylio Entry: Write how you have been today and what you've experienced",
+        "Symptom Tracking: Slide the sliders in the tab nextdoor"
+    )
+    Text("✍️ Mental Processing", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun MorningStretchesChecklist(
+    innerPadding: PaddingValues = PaddingValues(),
+    dbHelper: RoutineDatabaseHelper,
+    date: String,
+    amPm: String,
+    checks: MutableState<Map<String, Boolean>>,
+    onCheckChange: (Map<String, Boolean>) -> Unit
+) {
+    val exerciseLabels = listOf(
+        "Back Stretches: Kneel forward from sitting, left, right (2x 5 seconds)",
+        "Kneeling Forward: Stand up and let your hands touch your feet (30 seconds)",
+        "Cobra Stretch: Lie on belly, lift chest with arms — 10–15 sec, 2x",
+        "Child's Pose: Kneel, fold forward, arms stretched — 30–60 sec"
+    )
+    Text("🧘 General Stretches", style = MaterialTheme.typography.bodyMedium)
+    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+        exerciseLabels.forEach { label ->
+            CheckboxItem(
+                label = label,
+                dbHelper = dbHelper,
+                date = date,
+                amPm = amPm,
+                isChecked = checks.value[label] ?: false,
+                onCheckedChange = { isChecked ->
+                    val newChecks = checks.value.toMutableMap()
+                    newChecks[label] = isChecked
+                    onCheckChange(newChecks)
+                }
+            )
+        }
+    }
+}
+
 
 @Composable
 fun TMJReleaseChecklist(
@@ -1335,6 +1508,42 @@ fun HealthTrackerScreen(openedDay: String) {
             onTextChange = { newText -> notes = newText }
         )
         Spacer(modifier = Modifier.height(10.dp))
+    }
+}
+
+@Composable
+fun ExpandableSection(
+    title: String,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    content: @Composable () -> Unit,
+    contentPadding: PaddingValues = PaddingValues(all = 8.dp)
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .padding(contentPadding)
+            .animateContentSize(animationSpec = tween(durationMillis = 300, easing = LinearEasing))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onExpand() } // Make the whole row clickable to toggle
+                .padding(vertical = 4.dp) // Add some padding for click area
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand"
+            )
+        }
+        if (expanded) {
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            content()
+        }
     }
 }
 

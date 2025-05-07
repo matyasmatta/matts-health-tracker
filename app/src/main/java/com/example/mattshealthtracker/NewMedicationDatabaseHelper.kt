@@ -136,6 +136,8 @@ class NewMedicationDatabaseHelper(context: Context) :
                     "pantoprazol" to Pair(40f, "mg"),
                     "itopride" to Pair(50f, "mg"),
                     "alginate" to Pair(1f, "pack"),
+                    "mirtazapine" to Pair(7.5f, "mg"),
+                    "moxastine teoclate" to Pair(12.5f, "mg")
                 )
                 val (step, unit) = defaultMapping[name] ?: Pair(0f, "")
                 items.add(MedicationItem(name, dosage, step, unit, isStarred))
@@ -197,7 +199,9 @@ class NewMedicationDatabaseHelper(context: Context) :
         MedicationItem("omeprazol", 0f, 10f, "mg"),
         MedicationItem("pantoprazol", 0f, 40f, "mg"),
         MedicationItem("itopride", 0f, 50f, "mg"),
-        MedicationItem("alginate", 0f, 1f, "pack")
+        MedicationItem("alginate", 0f, 1f, "pack"),
+        MedicationItem("mirtazapine", 0f, 7.5f, "mg"),
+        MedicationItem("moxastine teoclate", 0f, 12.5f, "mg")
     )
 
     // Inserts or updates side effects for a given date.
