@@ -20,6 +20,12 @@ fun defaultMiscellaneousItems(): List<TrackerItem> {
         TrackerItem("Ear discomfort", 0f, false),
         TrackerItem("Testicle pain", 0f, false),
         TrackerItem("Teeth pain", 0f, false),
-        TrackerItem("Aura migraines", 0f, false)
+        TrackerItem("Aura migraines", 0f, false),
+        TrackerItem("Nausea", 0f, false),
+        TrackerItem("Dizziness", 0f, false),
+        TrackerItem("Acne", 0f, false),
+        TrackerItem("Back pain", 0f, false),
+        TrackerItem("Tendon pain", 0f, false),
+        TrackerItem("Carpal tunnel", 0f, false),
     )
 }
