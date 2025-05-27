@@ -84,6 +84,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -550,7 +554,7 @@ fun StatisticsScreen(openedDay: String) {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(0.dp))
             TimeframeSelector(selectedTimeframe) { viewModel.updateTimeframe(it) }
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -607,7 +611,7 @@ fun StatisticsScreen(openedDay: String) {
                     val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
                         selectedMetrics.take(3)
                     } else {
-                        allMetrics.map { it.first }.take(3) // Display first 3 if no selected metrics
+                        allMetrics.map { it.first }.take(1) // Display first 3 if no selected metrics
                     }
 
                     FlowRow {
@@ -779,7 +783,6 @@ fun HealthLineChart(
     chartTitle: String,
     modifier: Modifier = Modifier
 ) {
-    // Shared scroll state to sync horizontal scroll between chart and labels
     val scrollState = rememberScrollState()
 
     if (dataPoints.isEmpty()) {
@@ -789,8 +792,18 @@ fun HealthLineChart(
 
     val pointSpacing = calculatePointSpacing(dataPoints.size)
     val totalWidth = (dataPoints.size - 1) * pointSpacing.value
-    val chartContentWidth = totalWidth.dp
-    val canvasWidthModifier = if (dataPoints.size > 5) Modifier.width(chartContentWidth) else Modifier.fillMaxWidth()
+
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val minRequiredChartWidth = with(density) {
+        val screenWidthDp = configuration.screenWidthDp.dp  // Convert Int to Dp
+        screenWidthDp // this is already Dp, no need to convert again
+    }
+    val contentModifier = if (dataPoints.size > 1) {
+        Modifier.width(totalWidth.dp.coerceAtLeast(minRequiredChartWidth))
+    } else {
+        Modifier.fillMaxWidth()
+    }
 
     val minVal = dataPoints.minOrNull() ?: 0f
     val maxVal = (dataPoints.maxOrNull() ?: 10f) + 0.1f
@@ -800,23 +813,18 @@ fun HealthLineChart(
     val primaryColor = MaterialTheme.colorScheme.primary
     val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Color for the weekly ticks
+    val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
 
-    // Parse dates from labels, skip invalid
     val dates = labels.mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
 
-    // Indices of weekly ticks (Mondays only)
     val weeklyTickIndices = dates.mapIndexedNotNull { index, date ->
         if (date.dayOfWeek == DayOfWeek.MONDAY) index else null
     }
 
-    // Indices of monthly labels (first day of month or first index)
     val monthlyLabelIndices = dates.mapIndexedNotNull { index, date ->
         if (date.dayOfMonth == 1 || (index == 0 && dates.isNotEmpty())) index else null
     }
 
-    // Formatter for short month names (e.g., "Jan", "Feb")
-    // Using Locale.getDefault() explicitly for consistent month formatting
     val monthFormatter = DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -827,12 +835,11 @@ fun HealthLineChart(
                 .horizontalScroll(scrollState)
         ) {
             Canvas(
-                modifier = canvasWidthModifier.fillMaxHeight()
+                modifier = contentModifier.fillMaxHeight()
             ) {
-                val pointRadius = 6.dp.toPx()
                 val lineWidth = 2.dp.toPx()
                 val xStep = pointSpacing.toPx()
-                val tickLength = 8.dp.toPx() // Length of the weekly tick marks
+                val tickLength = 8.dp.toPx()
 
                 // Draw Y-axis grid lines
                 val numYLabels = 5
@@ -846,88 +853,96 @@ fun HealthLineChart(
                     )
                 }
 
-                // Draw data points and connecting lines
-                val pathPoints = mutableListOf<Offset>()
-                dataPoints.forEachIndexed { index, _ ->
-                    val x = index * xStep
-                    val y = size.height - normalizedData[index] * size.height
-                    pathPoints.add(Offset(x, y))
-                    drawCircle(primaryColor, radius = pointRadius, center = Offset(x, y))
-                }
+                // --- Draw Smoothed Line ---
+                if (dataPoints.size > 1) {
+                    val path = Path()
+                    val firstX = 0f
+                    val firstY = size.height - normalizedData[0] * size.height
+                    path.moveTo(firstX, firstY)
 
-                for (i in 0 until pathPoints.size - 1) {
-                    drawLine(
+                    for (i in 0 until dataPoints.size - 1) {
+                        val currentX = i * xStep
+                        val currentY = size.height - normalizedData[i] * size.height
+
+                        val nextX = (i + 1) * xStep
+                        val nextY = size.height - normalizedData[i + 1] * size.height
+
+                        val tension = 0.3f
+
+                        val controlX1 = currentX + (nextX - currentX) * tension
+                        val controlY1 = currentY
+
+                        val controlX2 = nextX - (nextX - currentX) * tension
+                        val controlY2 = nextY
+
+                        path.cubicTo(controlX1, controlY1, controlX2, controlY2, nextX, nextY)
+                    }
+
+                    // FIX: Added style = Stroke(width = lineWidth)
+                    drawPath(
+                        path = path,
                         color = primaryColor,
-                        start = pathPoints[i],
-                        end = pathPoints[i + 1],
-                        strokeWidth = lineWidth
+                        style = Stroke(width = lineWidth) // <--- THIS IS THE FIX
                     )
                 }
+                // --- END Draw Smoothed Line ---
 
                 // Draw Weekly Ticks (Mondays only)
                 weeklyTickIndices.forEach { index ->
                     val x = index * xStep
                     drawLine(
                         color = tickColor,
-                        start = Offset(x, size.height), // Start at the bottom of the canvas
-                        end = Offset(x, size.height - tickLength), // Draw tick upwards
-                        strokeWidth = 1.5.dp.toPx() // Thicker tick for visibility
+                        start = Offset(x, size.height),
+                        end = Offset(x, size.height - tickLength),
+                        strokeWidth = 1.5.dp.toPx()
                     )
                 }
 
-                // Draw Monthly Bars
+                // Draw Monthly Bars (Vertical lines for months)
                 monthlyLabelIndices.forEach { index ->
                     val x = index * xStep
                     drawLine(
-                        color = labelColor.copy(alpha = 0.7f),
+                        color = labelColor.copy(alpha = 0.3f),
                         start = Offset(x, 0f),
                         end = Offset(x, size.height),
                         strokeWidth = 1.dp.toPx()
                     )
                 }
-
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp)) // Space between chart and monthly labels
+        Spacer(modifier = Modifier.height(8.dp))
 
-        Row(
+        // Monthly labels
+        Box(
             modifier = Modifier
                 .horizontalScroll(scrollState)
-                .then(canvasWidthModifier),
-            horizontalArrangement = Arrangement.Start
+                .then(contentModifier)
+                .fillMaxHeight(0.05f)
         ) {
-            for (i in labels.indices) {
-                if (i in monthlyLabelIndices) {
-                    val date = dates.getOrNull(i)
-                    val rawText = date?.format(monthFormatter) ?: ""
-                    val labelText = rawText.replaceFirstChar { it.uppercase() }
+            monthlyLabelIndices.forEach { index ->
+                val date = dates.getOrNull(index)
+                val rawText = date?.format(monthFormatter) ?: ""
+                val labelText = rawText.replaceFirstChar { it.uppercaseChar() } // Capitalize first letter
 
-                    Box(
+                val xPosition = (index * pointSpacing.value).dp
+
+                if (labelText.isNotEmpty()) {
+                    Text(
+                        text = labelText,
+                        style = MaterialTheme.typography.labelMedium.copy( // Smaller text size (labelMedium)
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Normal // Normal font weight
+                        ),
                         modifier = Modifier
-                            .width(pointSpacing)
-                            .padding(horizontal = 0.dp), // keep spacing minimal here
-                        contentAlignment = Alignment.Center
-                    ) {
-                        BoxWithConstraints {
-                            Text(
-                                text = labelText,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Visible,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .widthIn(min = pointSpacing * 1.8f) // Allow label to visually overflow
-                                    .align(Alignment.Center)
-                            )
-                        }
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(pointSpacing))
+                            .offset(x = xPosition - (pointSpacing / 2))
+                            .wrapContentWidth(align = Alignment.CenterHorizontally)
+                            .align(Alignment.CenterStart),
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Visible,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }
