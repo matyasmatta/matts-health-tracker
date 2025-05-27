@@ -84,6 +84,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Medication
+import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
@@ -129,10 +133,10 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
-    object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.Add)
-    object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.Star)
-    object Exercises : BottomNavItem("exercises", "Exercises", Icons.Default.Refresh) // New tab
-    object MedicationTracking : BottomNavItem("medication_tracking", "Medications", Icons.Default.Check) // New Screen
+    object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.MonitorHeart)
+    object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.QueryStats)
+    object Exercises : BottomNavItem("exercises", "Exercises", Icons.Default.FitnessCenter) // New tab
+    object MedicationTracking : BottomNavItem("medication_tracking", "Medications", Icons.Default.Medication) // New Screen
 }
 
 @Composable
