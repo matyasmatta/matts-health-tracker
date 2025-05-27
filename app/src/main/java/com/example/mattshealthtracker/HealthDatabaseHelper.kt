@@ -223,4 +223,50 @@ class HealthDatabaseHelper(context: Context) :
             Log.e("CSVExportError", "Error exporting data to CSV: ${e.message}")
         }
     }
+
+    // NEW FUNCTION: Fetches HealthData entries within a specified date range (inclusive).
+    // Dates should be in "YYYY-MM-DD" format.
+    fun fetchDataInDateRange(startDate: String, endDate: String): List<HealthData> {
+        val db = readableDatabase
+        val data = mutableListOf<HealthData>()
+        val selection = "${HealthDatabaseHelper.COLUMN_DATE} BETWEEN ? AND ?"
+        val selectionArgs = arrayOf(startDate, endDate)
+        val cursor: Cursor = db.query(
+            HealthDatabaseHelper.TABLE_NAME,
+            null,
+            selection,
+            selectionArgs,
+            null,
+            null,
+            "${HealthDatabaseHelper.COLUMN_DATE} ASC" // Order by date for charting
+        )
+
+        if (cursor.moveToFirst()) {
+            do {
+                try {
+                    val dataItem = HealthData(
+                        currentDate = cursor.getString(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_DATE)),
+                        malaise = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_MALAIS)),
+                        soreThroat = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_SORE_THROAT)),
+                        lymphadenopathy = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_LYMPHADENOPATHY)),
+                        exerciseLevel = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_EXERCISE_LEVEL)),
+                        stressLevel = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_STRESS_LEVEL)),
+                        illnessImpact = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_ILLNESS_IMPACT)),
+                        depression = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_DEPRESSION)),
+                        hopelessness = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_HOPELESSNESS)),
+                        sleepQuality = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_SLEEP_QUALITY)),
+                        sleepLength = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_SLEEP_LENGTH)),
+                        sleepReadiness = cursor.getFloat(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_SLEEP_READINESS)),
+                        notes = cursor.getString(cursor.getColumnIndexOrThrow(HealthDatabaseHelper.COLUMN_NOTES))
+                    )
+                    data.add(dataItem)
+                } catch (e: Exception) {
+                    Log.e("DatabaseError", "Error parsing HealthData from cursor: ${e.message}")
+                }
+            } while (cursor.moveToNext())
+        }
+        cursor.close()
+        db.close()
+        return data
+    }
 }

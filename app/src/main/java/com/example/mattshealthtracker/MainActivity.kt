@@ -1,5 +1,6 @@
 package com.example.mattshealthtracker
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -59,21 +60,39 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Addchart
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount // Import GoogleSignInAccount
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Row // if you're scrolling a Row
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Dp
+import androidx.compose.runtime.remember
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import java.time.DayOfWeek
+import java.util.Locale
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MattsHealthTrackerTheme {
-                androidx.compose.material3.Surface(
+                Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = androidx.compose.material3.MaterialTheme.colorScheme.background
+                    color = MaterialTheme.colorScheme.background
                 ) {
                     var openedDay by rememberSaveable { mutableStateOf(AppGlobals.currentDay) }
                     var signedInAccount by rememberSaveable { mutableStateOf<GoogleSignInAccount?>(null) }
@@ -107,6 +126,7 @@ class MainActivity : ComponentActivity() {
 
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
     object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.Add)
+    object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.Star)
     object Exercises : BottomNavItem("exercises", "Exercises", Icons.Default.Refresh) // New tab
     object MedicationTracking : BottomNavItem("medication_tracking", "Medications", Icons.Default.Check) // New Screen
 }
@@ -126,6 +146,7 @@ fun HealthTrackerApp(
             NavigationBar {
                 listOf(
                     BottomNavItem.AddData,
+                    BottomNavItem.Statistics,
                     BottomNavItem.Exercises,
                     BottomNavItem.MedicationTracking
                 ).forEach { item ->
@@ -162,6 +183,7 @@ fun HealthTrackerApp(
             Box(modifier = Modifier.fillMaxSize()) {
                 when (currentScreen) {
                     is BottomNavItem.AddData -> HealthTrackerScreen(openedDay)
+                    is BottomNavItem.Statistics -> StatisticsScreen(openedDay)
                     is BottomNavItem.Exercises -> ExercisesScreen(openedDay)
                     is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay)
                 }
@@ -487,6 +509,325 @@ private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
     } catch (e: Exception) {
         Log.e("Export CSV", "Error exporting data to CSV zip", e)
         Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StatisticsScreen(openedDay: String) {
+    val context = LocalContext.current
+    val viewModel: StatisticsViewModel = viewModel(factory = StatisticsViewModelFactory(context))
+    val healthData = viewModel.healthData.value
+    val selectedTimeframe = viewModel.selectedTimeframe.value
+
+    Scaffold(topBar = { TopAppBar(title = { Text("Health Statistics") }) }) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
+            TimeframeSelector(selectedTimeframe) { viewModel.updateTimeframe(it) }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (healthData.isEmpty()) {
+                EmptyDataInfo()
+            } else {
+                HealthMetricsSummary(healthData)
+                Spacer(modifier = Modifier.height(24.dp))
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    listOf(
+                        "Malaise" to { it: HealthData -> it.malaise },
+                        "Stress Level" to { it: HealthData -> it.stressLevel },
+                        "Sleep Quality" to { it: HealthData -> it.sleepQuality },
+                        "Illness Impact" to { it: HealthData -> it.illnessImpact },
+                        "Depression" to { it: HealthData -> it.depression },
+                        "Hopelessness" to { it: HealthData -> it.hopelessness }
+                    ).forEach { (label, extractor) ->
+                        HealthMetricChart(
+                            title = "$label Over Time",
+                            dataPoints = healthData.map(extractor),
+                            labels = healthData.map { it.currentDate },
+                            chartTitle = label
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyDataInfo() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(vertical = 64.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("No data available for the selected timeframe.", style = MaterialTheme.typography.bodyLarge)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("Start tracking your health to see statistics here!", style = MaterialTheme.typography.bodyMedium)
+        Icon(Icons.Default.Addchart, contentDescription = "Information", modifier = Modifier.size(48.dp))
+    }
+}
+
+@Composable
+fun HealthMetricChart(title: String, dataPoints: List<Float>, labels: List<String>, chartTitle: String) {
+    Text(title, style = MaterialTheme.typography.titleMedium)
+    Spacer(modifier = Modifier.height(8.dp))
+    HealthLineChart(
+        dataPoints = dataPoints,
+        labels = labels,
+        chartTitle = chartTitle
+    )
+    Spacer(modifier = Modifier.height(24.dp))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TimeframeSelector(
+    selectedTimeframe: Timeframe,
+    onTimeframeSelected: (Timeframe) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.SpaceAround,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Timeframe.entries.forEach { timeframe ->
+            FilterChip(
+                selected = selectedTimeframe == timeframe,
+                onClick = { onTimeframeSelected(timeframe) },
+                label = { Text(timeframe.label) },
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+    }
+}
+
+@SuppressLint("DefaultLocale")
+@Composable
+fun HealthMetricsSummary(healthData: List<HealthData>) {
+    fun List<Float>.avgOrZero() = average().toFloat().takeIf { !it.isNaN() } ?: 0f
+
+    val stats = listOf(
+        "Average Malaise:" to healthData.map { it.malaise }.avgOrZero(),
+        "Average Sore Throat:" to healthData.map { it.soreThroat }.avgOrZero(),
+        "Average Lymphadenopathy:" to healthData.map { it.lymphadenopathy }.avgOrZero(),
+        "Average Exercise Level:" to healthData.map { it.exerciseLevel }.avgOrZero(),
+        "Average Stress Level:" to healthData.map { it.stressLevel }.avgOrZero(),
+        "Average Illness Impact:" to healthData.map { it.illnessImpact }.avgOrZero(),
+        "Average Depression:" to healthData.map { it.depression }.avgOrZero(),
+        "Average Hopelessness:" to healthData.map { it.hopelessness }.avgOrZero(),
+        "Average Sleep Quality:" to healthData.map { it.sleepQuality }.avgOrZero(),
+        "Average Sleep Length (hours):" to healthData.map { it.sleepLength }.avgOrZero(),
+        "Average Sleep Readiness:" to healthData.map { it.sleepReadiness }.avgOrZero(),
+    )
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Summary Statistics", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            stats.forEach { (label, value) ->
+                StatisticRow(label, String.format("%.1f", value))
+            }
+        }
+    }
+}
+
+@Composable
+fun StatisticRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+fun calculatePointSpacing(count: Int): Dp {
+    val maxSpacing = 14f  // max spacing for very few points
+    val minSpacing = 2f   // min spacing for many points
+    val maxCount = 180f   // above this, spacing stays at min
+
+    val spacing = if (count >= maxCount) {
+        minSpacing
+    } else {
+        maxSpacing - ((count / maxCount) * (maxSpacing - minSpacing))
+    }
+
+    return spacing.dp
+}
+
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
+fun HealthLineChart(
+    dataPoints: List<Float>,
+    labels: List<String>, // Expected ISO date strings "YYYY-MM-DD"
+    chartTitle: String,
+    modifier: Modifier = Modifier
+) {
+    // Shared scroll state to sync horizontal scroll between chart and labels
+    val scrollState = rememberScrollState()
+
+    if (dataPoints.isEmpty()) {
+        Text("No data to display for $chartTitle.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+
+    val pointSpacing = calculatePointSpacing(dataPoints.size)
+    val totalWidth = (dataPoints.size - 1) * pointSpacing.value
+    val chartContentWidth = totalWidth.dp
+    val canvasWidthModifier = if (dataPoints.size > 5) Modifier.width(chartContentWidth) else Modifier.fillMaxWidth()
+
+    val minVal = dataPoints.minOrNull() ?: 0f
+    val maxVal = (dataPoints.maxOrNull() ?: 10f) + 0.1f
+    val valueRange = maxVal - minVal
+    val normalizedData = dataPoints.map { if (valueRange == 0f) 0.5f else (it - minVal) / valueRange }
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Color for the weekly ticks
+
+    // Parse dates from labels, skip invalid
+    val dates = labels.mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+
+    // Indices of weekly ticks (Mondays only)
+    val weeklyTickIndices = dates.mapIndexedNotNull { index, date ->
+        if (date.dayOfWeek == DayOfWeek.MONDAY) index else null
+    }
+
+    // Indices of monthly labels (first day of month or first index)
+    val monthlyLabelIndices = dates.mapIndexedNotNull { index, date ->
+        if (date.dayOfMonth == 1 || (index == 0 && dates.isNotEmpty())) index else null
+    }
+
+    // Formatter for short month names (e.g., "Jan", "Feb")
+    // Using Locale.getDefault() explicitly for consistent month formatting
+    val monthFormatter = DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .horizontalScroll(scrollState)
+        ) {
+            Canvas(
+                modifier = canvasWidthModifier.fillMaxHeight()
+            ) {
+                val pointRadius = 6.dp.toPx()
+                val lineWidth = 2.dp.toPx()
+                val xStep = pointSpacing.toPx()
+                val tickLength = 8.dp.toPx() // Length of the weekly tick marks
+
+                // Draw Y-axis grid lines
+                val numYLabels = 5
+                for (i in 0 until numYLabels) {
+                    val y = size.height - (i.toFloat() / (numYLabels - 1)) * size.height
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+                // Draw data points and connecting lines
+                val pathPoints = mutableListOf<Offset>()
+                dataPoints.forEachIndexed { index, _ ->
+                    val x = index * xStep
+                    val y = size.height - normalizedData[index] * size.height
+                    pathPoints.add(Offset(x, y))
+                    drawCircle(primaryColor, radius = pointRadius, center = Offset(x, y))
+                }
+
+                for (i in 0 until pathPoints.size - 1) {
+                    drawLine(
+                        color = primaryColor,
+                        start = pathPoints[i],
+                        end = pathPoints[i + 1],
+                        strokeWidth = lineWidth
+                    )
+                }
+
+                // Draw Weekly Ticks (Mondays only)
+                weeklyTickIndices.forEach { index ->
+                    val x = index * xStep
+                    drawLine(
+                        color = tickColor,
+                        start = Offset(x, size.height), // Start at the bottom of the canvas
+                        end = Offset(x, size.height - tickLength), // Draw tick upwards
+                        strokeWidth = 1.5.dp.toPx() // Thicker tick for visibility
+                    )
+                }
+
+                // Draw Monthly Bars
+                monthlyLabelIndices.forEach { index ->
+                    val x = index * xStep
+                    drawLine(
+                        color = labelColor.copy(alpha = 0.7f),
+                        start = Offset(x, 0f),
+                        end = Offset(x, size.height),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp)) // Space between chart and monthly labels
+
+        Row(
+            modifier = Modifier
+                .horizontalScroll(scrollState)
+                .then(canvasWidthModifier),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            for (i in labels.indices) {
+                if (i in monthlyLabelIndices) {
+                    val date = dates.getOrNull(i)
+                    val rawText = date?.format(monthFormatter) ?: ""
+                    val labelText = rawText.replaceFirstChar { it.uppercase() }
+
+                    Box(
+                        modifier = Modifier
+                            .width(pointSpacing)
+                            .padding(horizontal = 0.dp), // keep spacing minimal here
+                        contentAlignment = Alignment.Center
+                    ) {
+                        BoxWithConstraints {
+                            Text(
+                                text = labelText,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Visible,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .widthIn(min = pointSpacing * 1.8f) // Allow label to visually overflow
+                                    .align(Alignment.Center)
+                            )
+                        }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(pointSpacing))
+                }
+            }
+        }
     }
 }
 
@@ -1233,7 +1574,7 @@ fun MedicationItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically
     ) {
         // Star icon: tinted with the Material theme’s secondary color if starred.
         Icon(
@@ -1253,7 +1594,7 @@ fun MedicationItemRow(
             modifier = Modifier.weight(1f)
         )
         // Dosage counter with value shown between decrement and increment buttons.
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { onDecrement() }) {
                 Icon(imageVector = Icons.Filled.Remove, contentDescription = "Decrease dosage")
             }
@@ -1717,7 +2058,7 @@ fun NewSliderInput(
                             x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
                             y = 28.dp // Adjusted vertical offset to place it below the slider track
                         )
-                        .clip(androidx.compose.foundation.shape.CircleShape) // Make it a circle
+                        .clip(CircleShape) // Make it a circle
                         // Adjust marker color/alpha based on enabled state
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if(enabled) 0.3f else 0.1f)) // Semi-transparent grey, less visible when disabled
                         .size(12.dp) // Size of the marker
@@ -1926,7 +2267,7 @@ fun SliderInput(
                             x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
                             y = 28.dp // Adjusted vertical offset.
                         )
-                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
                         .size(12.dp)
                 )
