@@ -83,7 +83,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
-
+import androidx.compose.foundation.layout.FlowRow
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -512,13 +512,34 @@ private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun StatisticsScreen(openedDay: String) {
     val context = LocalContext.current
     val viewModel: StatisticsViewModel = viewModel(factory = StatisticsViewModelFactory(context))
     val healthData = viewModel.healthData.value
     val selectedTimeframe = viewModel.selectedTimeframe.value
+
+    // Define all available metrics here:
+    val allMetrics = listOf(
+        "Malaise" to { it: HealthData -> it.malaise },
+        "Stress Level" to { it: HealthData -> it.stressLevel },
+        "Sleep Quality" to { it: HealthData -> it.sleepQuality },
+        "Illness Impact" to { it: HealthData -> it.illnessImpact },
+        "Depression" to { it: HealthData -> it.depression },
+        "Hopelessness" to { it: HealthData -> it.hopelessness },
+        "Sore Throat" to { it: HealthData -> it.soreThroat },
+        "Sleep Length" to { it: HealthData -> it.sleepLength },
+        "Lymphadenopathy" to { it: HealthData -> it.lymphadenopathy },
+        "Exercise Level" to { it: HealthData -> it.exerciseLevel },
+        "Sleep Readiness" to { it: HealthData -> it.sleepReadiness }
+    )
+
+    // Keep track of selected metrics in state, initialized with some defaults
+    val selectedMetrics = remember { mutableStateListOf("Malaise", "Stress Level", "Sleep Quality") }
+
+    // State to control expansion
+    var showAllMetrics by remember { mutableStateOf(false) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Health Statistics") }) }) { paddingValues ->
         Column(
@@ -529,31 +550,113 @@ fun StatisticsScreen(openedDay: String) {
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             TimeframeSelector(selectedTimeframe) { viewModel.updateTimeframe(it) }
             Spacer(modifier = Modifier.height(16.dp))
 
+            // --- AVERAGES SECTION ---
             if (healthData.isEmpty()) {
                 EmptyDataInfo()
             } else {
-                HealthMetricsSummary(healthData)
+                HealthMetricsSummary(healthData) // This is your averages section
                 Spacer(modifier = Modifier.height(24.dp))
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    listOf(
-                        "Malaise" to { it: HealthData -> it.malaise },
-                        "Stress Level" to { it: HealthData -> it.stressLevel },
-                        "Sleep Quality" to { it: HealthData -> it.sleepQuality },
-                        "Illness Impact" to { it: HealthData -> it.illnessImpact },
-                        "Depression" to { it: HealthData -> it.depression },
-                        "Hopelessness" to { it: HealthData -> it.hopelessness }
-                    ).forEach { (label, extractor) ->
-                        HealthMetricChart(
-                            title = "$label Over Time",
-                            dataPoints = healthData.map(extractor),
-                            labels = healthData.map { it.currentDate },
-                            chartTitle = label
+            }
+
+            // --- TOGGLES SECTION (Now with Expand/Collapse) ---
+            Column(modifier = Modifier.animateContentSize()) { // Apply animateContentSize here
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showAllMetrics = !showAllMetrics } // Toggle on row click
+                        .padding(vertical = 2.dp), // Add some padding for click area
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Select Metrics to Display", style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { showAllMetrics = !showAllMetrics }) {
+                        Icon(
+                            imageVector = if (showAllMetrics) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (showAllMetrics) "Collapse metrics" else "Expand metrics"
                         )
                     }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Conditionally display chips
+                if (showAllMetrics) {
+                    // Expanded view: Show all metrics in FlowRow
+                    FlowRow {
+                        allMetrics.forEach { (label, _) ->
+                            FilterChip(
+                                selected = selectedMetrics.contains(label),
+                                onClick = {
+                                    if (selectedMetrics.contains(label)) {
+                                        selectedMetrics.remove(label)
+                                    } else {
+                                        selectedMetrics.add(label)
+                                    }
+                                },
+                                label = { Text(label) },
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                } else {
+                    // Collapsed view: Show only selected metrics (or a default few if none selected)
+                    // Take up to 3 selected metrics, or fallback to first 3 allMetrics if selected is empty.
+                    val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
+                        selectedMetrics.take(3)
+                    } else {
+                        allMetrics.map { it.first }.take(3) // Display first 3 if no selected metrics
+                    }
+
+                    FlowRow {
+                        displayedMetrics.forEach { label ->
+                            // Find the full metric object to pass to FilterChip
+                            val metric = allMetrics.firstOrNull { it.first == label }
+                            metric?.let {
+                                FilterChip(
+                                    selected = selectedMetrics.contains(label),
+                                    onClick = {
+                                        // On click, expand and then handle selection
+                                        showAllMetrics = true
+                                        if (selectedMetrics.contains(label)) {
+                                            selectedMetrics.remove(label)
+                                        } else {
+                                            selectedMetrics.add(label)
+                                        }
+                                    },
+                                    label = { Text(label) },
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        // Optionally add a "..." chip if more metrics are hidden
+                        if (allMetrics.size > displayedMetrics.size && selectedMetrics.size > 3 || (selectedMetrics.isEmpty() && allMetrics.size > 3)) {
+                            FilterChip(
+                                selected = false,
+                                onClick = { showAllMetrics = true },
+                                label = { Text("...") },
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp)) // Space after toggles section
+
+            // --- GRAPHS SECTION ---
+            if (healthData.isNotEmpty()) {
+                selectedMetrics.forEach { metricLabel ->
+                    val extractor = allMetrics.firstOrNull { it.first == metricLabel }?.second
+                    extractor?.let {
+                        HealthLineChart(
+                            chartTitle = metricLabel,
+                            dataPoints = healthData.map(it),
+                            labels = healthData.map { it.currentDate }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
         }
