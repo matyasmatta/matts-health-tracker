@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
@@ -352,12 +353,11 @@ fun StatisticsScreen(openedDay: String) {
     val viewModel: StatisticsViewModel = viewModel(factory = StatisticsViewModelFactory(context, openedDay))
     val healthData = viewModel.healthData.value
     val selectedTimeframe = viewModel.selectedTimeframe.value
-    val currentChartStartDate by viewModel.currentStartDate.collectAsState() // Observe the start date
+    val currentChartStartDate by viewModel.currentStartDate.collectAsState()
+    val summarySentence by viewModel.summarySentence
+    val metricDifferences by viewModel.metricDifferences
 
-    // Use LaunchedEffect to react to changes in the 'openedDay' parameter
     LaunchedEffect(openedDay) {
-        // This block will run whenever 'openedDay' changes.
-        // It updates the ViewModel's internal _currentOpenedDay StateFlow.
         viewModel.updateOpenedDay(openedDay)
     }
 
@@ -375,9 +375,23 @@ fun StatisticsScreen(openedDay: String) {
         "Sleep Readiness" to { it: HealthData -> it.sleepReadiness }
     )
 
+    val allMetricsWithGoodBadFlagUI = listOf(
+        MetricInfo("Malaise", { it.malaise }, isHigherBetter = false),
+        MetricInfo("Stress Level", { it.stressLevel }, isHigherBetter = false),
+        MetricInfo("Sleep Quality", { it.sleepQuality }, isHigherBetter = true),
+        MetricInfo("Illness Impact", { it.illnessImpact }, isHigherBetter = false),
+        MetricInfo("Depression", { it.depression }, isHigherBetter = false),
+        MetricInfo("Hopelessness", { it.hopelessness }, isHigherBetter = false),
+        MetricInfo("Sore Throat", { it.soreThroat }, isHigherBetter = false),
+        MetricInfo("Sleep Length", { it.sleepLength }, isHigherBetter = true),
+        MetricInfo("Lymphadenopathy", { it.lymphadenopathy }, isHigherBetter = false),
+        MetricInfo("Exercise Level", { it.exerciseLevel }, isHigherBetter = true),
+        MetricInfo("Sleep Readiness", { it.sleepReadiness }, isHigherBetter = true)
+    )
+
     val selectedMetrics = remember { mutableStateListOf<String>() }
     var showAllMetrics by remember { mutableStateOf(false) }
-    var smoothingWindowSize by remember { mutableStateOf(5) } // State for smoothing window size
+    var smoothingWindowSize by remember { mutableStateOf(5) }
 
 
     Scaffold(
@@ -391,13 +405,13 @@ fun StatisticsScreen(openedDay: String) {
                     ) {
                         Icon(
                             imageVector = Icons.Filled.CalendarToday,
-                            contentDescription = "Opened Day",
+                            contentDescription = "Interval Start Date",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = "$currentChartStartDate onwards", // Display the observed start date
+                            text = currentChartStartDate,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -416,17 +430,20 @@ fun StatisticsScreen(openedDay: String) {
         ) {
             Spacer(modifier = Modifier.height(0.dp))
             TimeframeSelector(selectedTimeframe) { viewModel.updateTimeframe(it) }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // --- AVERAGES SECTION ---
             if (healthData.isEmpty()) {
                 EmptyDataInfo()
             } else {
-                HealthMetricsSummary(healthData)
-                Spacer(modifier = Modifier.height(24.dp))
+                HealthMetricsSummary(
+                    healthData = healthData,
+                    summarySentence = summarySentence,
+                    metricDifferences = metricDifferences,
+                    allMetricsWithGoodBadFlag = allMetricsWithGoodBadFlagUI
+                )
+                Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // --- TOGGLES SECTION (Now with Expand/Collapse) ---
             Column(modifier = Modifier.animateContentSize()) {
                 Row(
                     modifier = Modifier
@@ -440,13 +457,15 @@ fun StatisticsScreen(openedDay: String) {
                     IconButton(onClick = { showAllMetrics = !showAllMetrics }) {
                         Icon(
                             imageVector = if (showAllMetrics) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                            contentDescription = if (showAllMetrics) "Collapse metrics" else "Expand metrics"
+                            contentDescription = if (showAllMetrics) "Collapse metrics"
+                            else "Expand metrics"
                         )
                     }
                 }
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // Conditionally display chips
+                // --- MODIFICATION START ---
+                // Conditional display for filter chips
                 if (showAllMetrics) {
                     FlowRow {
                         allMetrics.forEach { (label, _) ->
@@ -465,32 +484,18 @@ fun StatisticsScreen(openedDay: String) {
                         }
                     }
                 } else {
-                    val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
-                        selectedMetrics.take(3)
-                    } else {
-                        allMetrics.map { it.first }.take(1)
-                    }
-
-                    FlowRow {
-                        displayedMetrics.forEach { label ->
-                            val metric = allMetrics.firstOrNull { it.first == label }
-                            metric?.let {
-                                FilterChip(
-                                    selected = selectedMetrics.contains(label),
-                                    onClick = {
-                                        showAllMetrics = true
-                                        if (selectedMetrics.contains(label)) {
-                                            selectedMetrics.remove(label)
-                                        } else {
-                                            selectedMetrics.add(label)
-                                        }
-                                    },
-                                    label = { Text(label) },
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        if (allMetrics.size > displayedMetrics.size && selectedMetrics.size > 3 || (selectedMetrics.isEmpty() && allMetrics.size > 3)) {
+                    // When not expanded and no metrics are selected, show only "Malaise" and "..."
+                    if (selectedMetrics.isEmpty() && healthData.isNotEmpty()) {
+                        FlowRow {
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    selectedMetrics.add("Malaise") // Automatically select Malaise
+                                    showAllMetrics = true // And open the expanded view
+                                },
+                                label = { Text("Malaise") },
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
                             FilterChip(
                                 selected = false,
                                 onClick = { showAllMetrics = true },
@@ -498,13 +503,53 @@ fun StatisticsScreen(openedDay: String) {
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                             )
                         }
+                    } else {
+                        // Original logic for showing selected metrics or first few if expanded
+                        val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
+                            selectedMetrics.take(3)
+                        } else {
+                            allMetrics.map { it.first }.take(3) // This branch won't be hit if selectedMetrics is empty AND healthData is not empty due to the new if block above
+                        }
+
+                        FlowRow {
+                            displayedMetrics.forEach { label ->
+                                val metric = allMetrics.firstOrNull { it.first == label }
+                                metric?.let {
+                                    FilterChip(
+                                        selected = selectedMetrics.contains(label),
+                                        onClick = {
+                                            showAllMetrics = true
+                                            if (selectedMetrics.contains(label)) {
+                                                selectedMetrics.remove(label)
+                                            } else {
+                                                selectedMetrics.add(label)
+                                            }
+                                        },
+                                        label = { Text(label) },
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            if (allMetrics.size > displayedMetrics.size || (selectedMetrics.isNotEmpty() && selectedMetrics.size > 3)) {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { showAllMetrics = true },
+                                    label = { Text("...") },
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                     }
                 }
+                // --- END MODIFICATION ---
             }
             Spacer(modifier = Modifier.height(24.dp))
 
-            // --- GRAPHS SECTION ---
-            if (healthData.isNotEmpty()) {
+            // --- MODIFICATION START ---
+            // Remove the Text("Select metrics above to view graphs.") when no metrics are selected
+            // This entire `else if` block should be removed or modified.
+            // The logic below now only proceeds if selectedMetrics is NOT empty.
+            if (healthData.isNotEmpty() && selectedMetrics.isNotEmpty()) {
                 selectedMetrics.forEach { metricLabel ->
                     val extractor = allMetrics.firstOrNull { it.first == metricLabel }?.second
                     extractor?.let {
@@ -512,12 +557,13 @@ fun StatisticsScreen(openedDay: String) {
                             chartTitle = metricLabel,
                             dataPoints = healthData.map(it),
                             labels = healthData.map { it.currentDate },
-                            smoothingWindowSize = smoothingWindowSize // Pass the smoothing window size
+                            smoothingWindowSize = smoothingWindowSize
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
+            // --- END MODIFICATION ---
         }
     }
 }
@@ -563,42 +609,113 @@ fun TimeframeSelector(
 }
 
 @SuppressLint("DefaultLocale")
+@OptIn(ExperimentalMaterial3Api::class) // For Card and FilterChip
 @Composable
-fun HealthMetricsSummary(healthData: List<HealthData>) {
+fun HealthMetricsSummary(
+    healthData: List<HealthData>,
+    summarySentence: String,
+    metricDifferences: Map<String, Float>, // <-- Added parameter for differences
+    allMetricsWithGoodBadFlag: List<MetricInfo> // <-- Added parameter for metric info
+) {
+    var expanded by remember { mutableStateOf(false) }
+
     fun List<Float>.avgOrZero() = average().toFloat().takeIf { !it.isNaN() } ?: 0f
 
     val stats = listOf(
-        "Average Malaise:" to healthData.map { it.malaise }.avgOrZero(),
-        "Average Sore Throat:" to healthData.map { it.soreThroat }.avgOrZero(),
-        "Average Lymphadenopathy:" to healthData.map { it.lymphadenopathy }.avgOrZero(),
-        "Average Exercise Level:" to healthData.map { it.exerciseLevel }.avgOrZero(),
-        "Average Stress Level:" to healthData.map { it.stressLevel }.avgOrZero(),
-        "Average Illness Impact:" to healthData.map { it.illnessImpact }.avgOrZero(),
-        "Average Depression:" to healthData.map { it.depression }.avgOrZero(),
-        "Average Hopelessness:" to healthData.map { it.hopelessness }.avgOrZero(),
-        "Average Sleep Quality:" to healthData.map { it.sleepQuality }.avgOrZero(),
-        "Average Sleep Length (hours):" to healthData.map { it.sleepLength }.avgOrZero(),
-        "Average Sleep Readiness:" to healthData.map { it.sleepReadiness }.avgOrZero(),
+        "Malaise" to healthData.map { it.malaise }.avgOrZero(),
+        "Stress Level" to healthData.map { it.stressLevel }.avgOrZero(),
+        "Sleep Quality" to healthData.map { it.sleepQuality }.avgOrZero(),
+        "Illness Impact" to healthData.map { it.illnessImpact }.avgOrZero(),
+        "Depression" to healthData.map { it.depression }.avgOrZero(),
+        "Hopelessness" to healthData.map { it.hopelessness }.avgOrZero(),
+        "Sore Throat" to healthData.map { it.soreThroat }.avgOrZero(),
+        "Sleep Length" to healthData.map { it.sleepLength }.avgOrZero(),
+        "Lymphadenopathy" to healthData.map { it.lymphadenopathy }.avgOrZero(),
+        "Exercise Level" to healthData.map { it.exerciseLevel }.avgOrZero(),
+        "Sleep Readiness" to healthData.map { it.sleepReadiness }.avgOrZero(),
     )
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("📌  Summary Statistics", style = MaterialTheme.typography.titleMedium)
+        Column(
+            modifier = Modifier
+                .padding(top = 6.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)
+                .animateContentSize()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("📌  Summary Statistics", style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expanded) "Collapse summary" else "Expand summary"
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
-            stats.forEach { (label, value) ->
-                StatisticRow(label, String.format("%.1f", value))
+
+            if (expanded) {
+                stats.forEach { (label, value) ->
+                    val change = metricDifferences[label] // Get the difference for this metric
+                    val metricInfo = allMetricsWithGoodBadFlag.firstOrNull { it.name == label }
+
+                    StatisticRow(
+                        label = label,
+                        value = String.format("%.1f", value),
+                        change = change, // Pass the change
+                        isHigherBetter = metricInfo?.isHigherBetter // Pass the good/bad flag
+                    )
+                }
+            } else {
+                Text(
+                    text = summarySentence,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
 }
 
+// --- MODIFIED StatisticRow Composable ---
 @Composable
-fun StatisticRow(label: String, value: String) {
+fun StatisticRow(label: String, value: String, change: Float? = null, isHigherBetter: Boolean? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            change?.let { diff ->
+                // Determine color based on difference and isHigherBetter flag
+                val changeColor = if (isHigherBetter != null) {
+                    if (diff > 0 && isHigherBetter) Color.Green // Positive change is good
+                    else if (diff < 0 && !isHigherBetter) Color.Green // Negative change is good
+                    else if (diff > 0 && !isHigherBetter) Color.Red // Positive change is bad
+                    else if (diff < 0 && isHigherBetter) Color.Red // Negative change is bad
+                    else MaterialTheme.colorScheme.onSurfaceVariant // No significant change, or zero
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant // Default if flag is unknown
+                }
+
+                val formattedDiff = String.format(Locale.getDefault(), "%+.1f", diff)
+
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "($formattedDiff)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = changeColor,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
