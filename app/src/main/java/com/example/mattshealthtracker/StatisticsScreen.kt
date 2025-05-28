@@ -120,7 +120,7 @@ fun applySavitzkyGolayFilter(data: List<Float>, windowSize: Int, polynomialOrder
 
 @Composable
 fun calculatePointSpacing(count: Int): Dp {
-    val maxSpacing = 14f  // Maximum spacing for very few points
+    val maxSpacing = 50f  // Maximum spacing for very few points
     val minSpacing = 2f   // Minimum spacing for many points
     val maxCount = 180f   // Above this count, spacing stays at minimum
 

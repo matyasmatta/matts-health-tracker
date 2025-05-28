@@ -21,6 +21,7 @@ import java.util.Locale // <-- Ensure this is imported for DateTimeFormatter.ofP
 
 // Enum to define available timeframes
 enum class Timeframe(val label: String) {
+    TWO_WEEKS("2 Weeks"), // <-- ADD THIS LINE
     ONE_MONTH("1 Month"),
     THREE_MONTHS("3 Months"),
     SIX_MONTHS("6 Months")
@@ -97,6 +98,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         viewModelScope.launch(Dispatchers.IO) {
             val endDate = referenceDate
             val startDate = when (_selectedTimeframe.value) {
+                Timeframe.TWO_WEEKS -> endDate.minusWeeks(2).plusDays(1) // <-- ADD THIS CASE
                 Timeframe.ONE_MONTH -> endDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> endDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> endDate.minusMonths(6).plusDays(1)
@@ -104,6 +106,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
 
             val prevEndDate = startDate.minusDays(1)
             val prevStartDate = when (_selectedTimeframe.value) {
+                Timeframe.TWO_WEEKS -> prevEndDate.minusWeeks(2).plusDays(1) // <-- ADD THIS CASE
                 Timeframe.ONE_MONTH -> prevEndDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> prevEndDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> prevEndDate.minusMonths(6).plusDays(1)
@@ -119,10 +122,9 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
             val previousIntervalData = dbHelper.fetchDataInDateRange(prevStartDate.format(formatter), prevEndDate.format(formatter))
             _previousIntervalHealthData.value = previousIntervalData
 
-            // Generate summary and update differences
             val (summary, diffs) = generateSummaryAndDifferences(currentIntervalData, previousIntervalData)
             _summarySentence.value = summary
-            _metricDifferences.value = diffs // Update the new state
+            _metricDifferences.value = diffs
         }
     }
 
