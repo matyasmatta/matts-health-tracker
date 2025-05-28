@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Addchart
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Card
@@ -37,6 +38,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -55,21 +60,307 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/**
+ * Applies a Savitzky-Golay filter to smooth a list of data points.
+ *
+ * @param data The input list of Float data points.
+ * @param windowSize The size of the smoothing window (must be an odd number).
+ * @param polynomialOrder The order of the polynomial to fit (e.g., 2 for quadratic).
+ * @return A new list of smoothed Float data points.
+ */
+fun applySavitzkyGolayFilter(data: List<Float>, windowSize: Int, polynomialOrder: Int): List<Float> {
+    if (data.size < windowSize) return data // Cannot smooth if data is smaller than window
+
+    require(windowSize % 2 == 1) { "Window size must be an odd number." }
+    require(polynomialOrder < windowSize) { "Polynomial order must be less than window size." }
+    require(windowSize >= 3) { "Window size must be at least 3 for smoothing." }
+
+    val halfWindow = windowSize / 2
+    val smoothedData = data.toMutableList()
+
+    // Pre-calculated coefficients for common window sizes and polynomial order 2 (quadratic).
+    val coefficients: Map<Int, List<Float>> = mapOf(
+        // For window 3, a simple 3-point average effectively provides some smoothing.
+        3 to listOf(1f/3f, 1f/3f, 1f/3f), // Simple 3-point moving average
+        5 to listOf(-3f/35f, 12f/35f, 17f/35f, 12f/35f, -3f/35f), // SG(5,2)
+        7 to listOf(-2f/21f, 3f/21f, 6f/21f, 7f/21f, 6f/21f, 3f/21f, -2f/21f) // SG(7,2)
+    )
+
+    val currentCoefficients = coefficients[windowSize]
+        ?: throw IllegalArgumentException("No pre-calculated coefficients for window size $windowSize and polynomial order $polynomialOrder.")
+
+    for (i in data.indices) {
+        var sum = 0f
+        var effectiveCoeffSum = 0f
+
+        // Apply convolution, handling edges by only including points within bounds.
+        for (j in -halfWindow..halfWindow) {
+            val dataIndex = i + j
+            val coeffIndex = j + halfWindow
+
+            if (dataIndex >= 0 && dataIndex < data.size) {
+                sum += data[dataIndex] * currentCoefficients[coeffIndex]
+                effectiveCoeffSum += currentCoefficients[coeffIndex]
+            }
+        }
+        // Normalize the sum if the window is truncated at the edges.
+        smoothedData[i] = if (effectiveCoeffSum != 0f) sum / effectiveCoeffSum else sum
+    }
+
+    return smoothedData
+}
+
+@Composable
+fun calculatePointSpacing(count: Int): Dp {
+    val maxSpacing = 14f  // Maximum spacing for very few points
+    val minSpacing = 2f   // Minimum spacing for many points
+    val maxCount = 180f   // Above this count, spacing stays at minimum
+
+    val spacing = if (count >= maxCount) {
+        minSpacing
+    } else {
+        maxSpacing - ((count / maxCount) * (maxSpacing - minSpacing))
+    }
+
+    return spacing.dp
+}
+
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
+fun HealthLineChart(
+    dataPoints: List<Float>,
+    labels: List<String>, // Expected ISO date strings "YYYY-MM-DD"
+    chartTitle: String,
+    smoothingWindowSize: Int = 5, // Default smoothing window size
+    modifier: Modifier = Modifier
+) {
+    val scrollState = rememberScrollState()
+
+    if (dataPoints.isEmpty()) {
+        Text("No data to display for $chartTitle.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+
+    // Apply Savitzky-Golay filter here before drawing
+    val smoothedDataPoints = remember(dataPoints, smoothingWindowSize) {
+        applySavitzkyGolayFilter(dataPoints, smoothingWindowSize, 2) // Using polynomial order 2
+    }
+
+    val pointSpacing = calculatePointSpacing(smoothedDataPoints.size) // Use smoothed data size for spacing
+    val totalWidth = (smoothedDataPoints.size - 1) * pointSpacing.value
+
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val minRequiredChartWidth = with(density) {
+        configuration.screenWidthDp.dp
+    }
+
+    val contentModifier = if (smoothedDataPoints.size > 1) {
+        Modifier.width(totalWidth.dp.coerceAtLeast(minRequiredChartWidth))
+    } else {
+        Modifier.fillMaxWidth()
+    }
+
+    // --- MODIFICATION START ---
+    // Define the fixed range for your data (0 to 4)
+    val dataMin = 0f
+    val dataMax = 4f
+    val dataRange = dataMax - dataMin
+
+    // This function will map your data points (0-4) to the canvas height (0 to size.height)
+    // A value of 0 should be at the bottom (size.height)
+    // A value of 4 should be at the top (0f)
+    fun mapValueToY(value: Float, canvasHeight: Float): Float {
+        // First, normalize the value within the 0-4 range to 0-1
+        val normalizedValue = (value - dataMin) / dataRange
+        // Then, invert it (so 0 is high, 1 is low for Y-axis) and scale to canvas height
+        return canvasHeight * (1f - normalizedValue)
+    }
+    // --- MODIFICATION END ---
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+
+    val dates = labels.mapNotNull { dateString: String -> runCatching { LocalDate.parse(dateString) }.getOrNull() }
+
+    val weeklyTickIndices = dates.mapIndexedNotNull { index, date ->
+        if (date.dayOfWeek == DayOfWeek.MONDAY) index else null
+    }
+
+    val monthlyLabelIndices = dates.mapIndexedNotNull { index, date ->
+        if (date.dayOfMonth == 1 || (index == 0 && dates.isNotEmpty())) index else null
+    }
+
+    val monthFormatter = DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(chartTitle, style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.CenterHorizontally))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .horizontalScroll(scrollState)
+        ) {
+            Canvas(
+                modifier = contentModifier.fillMaxHeight()
+            ) {
+                val lineWidth = 2.dp.toPx()
+                val xStep = pointSpacing.toPx()
+                val tickLength = 8.dp.toPx()
+
+                // Draw Y-axis grid lines and labels (now based on 0-4 range)
+                val numYLabels = 5 // For 0, 1, 2, 3, 4
+                for (i in 0 until numYLabels) {
+                    val value = dataMin + (i.toFloat() / (numYLabels - 1)) * dataRange // Calculate value for this label
+                    val y = mapValueToY(value, size.height) // Map value to Y position on canvas
+
+                    // Draw grid line
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+
+                    // Draw text label for Y-axis (e.g., "0", "1", "2", "3", "4")
+                    drawContext.canvas.nativeCanvas.apply {
+                        val textPaint = android.graphics.Paint().apply {
+                            color = labelColor.toArgb()
+                            textSize = 12.sp.toPx() // Adjust text size as needed
+                            textAlign = android.graphics.Paint.Align.RIGHT
+                        }
+                        drawText(
+                            value.toInt().toString(), // Display as integer
+                            -8.dp.toPx(), // Offset slightly to the left of the chart area
+                            y + textPaint.textSize / 3, // Adjust Y position for centering
+                            textPaint
+                        )
+                    }
+                }
+
+
+                // --- Draw Smoothed Line ---
+                if (smoothedDataPoints.size > 1) {
+                    val path = Path()
+                    val firstX = 0f
+                    val firstY = mapValueToY(smoothedDataPoints[0], size.height) // Use mapValueToY
+                    path.moveTo(firstX, firstY)
+
+                    for (i in 0 until smoothedDataPoints.size - 1) {
+                        val currentX = i * xStep
+                        val currentY = mapValueToY(smoothedDataPoints[i], size.height) // Use mapValueToY
+
+                        val nextX = (i + 1) * xStep
+                        val nextY = mapValueToY(smoothedDataPoints[i + 1], size.height) // Use mapValueToY
+
+                        val tension = 0.4f // Adjust tension for the curve's appearance
+
+                        val controlX1 = currentX + (nextX - currentX) * tension
+                        val controlY1 = currentY
+
+                        val controlX2 = nextX - (nextX - currentX) * tension
+                        val controlY2 = nextY
+
+                        path.cubicTo(controlX1, controlY1, controlX2, controlY2, nextX, nextY)
+                    }
+
+                    drawPath(
+                        path = path,
+                        color = primaryColor,
+                        style = Stroke(width = lineWidth)
+                    )
+                }
+                // --- END Draw Smoothed Line ---
+
+                // Draw Weekly Ticks (Mondays only)
+                weeklyTickIndices.forEach { index ->
+                    val x = index * xStep
+                    drawLine(
+                        color = tickColor,
+                        start = Offset(x, size.height),
+                        end = Offset(x, size.height - tickLength),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
+
+                // Draw Monthly Bars (Vertical lines for months)
+                monthlyLabelIndices.forEach { index ->
+                    val x = index * xStep
+                    drawLine(
+                        color = labelColor.copy(alpha = 0.3f),
+                        start = Offset(x, 0f),
+                        end = Offset(x, size.height),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Monthly labels
+        Box(
+            modifier = Modifier
+                .horizontalScroll(scrollState)
+                .then(contentModifier)
+                .fillMaxHeight(0.05f)
+        ) {
+            monthlyLabelIndices.forEach { index ->
+                val date = dates.getOrNull(index)
+                val rawText = date?.format(monthFormatter) ?: ""
+                val labelText = rawText.replaceFirstChar { it.uppercaseChar() }
+
+                val xPosition = (index * pointSpacing.value).dp
+
+                if (labelText.isNotEmpty()) {
+                    Text(
+                        text = labelText,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Normal
+                        ),
+                        modifier = Modifier
+                            .offset(x = xPosition - (pointSpacing / 2))
+                            .wrapContentWidth(align = Alignment.CenterHorizontally)
+                            .align(Alignment.CenterStart),
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Visible,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun StatisticsScreen(openedDay: String) {
     val context = LocalContext.current
-    val viewModel: StatisticsViewModel = viewModel(factory = StatisticsViewModelFactory(context))
+    val viewModel: StatisticsViewModel = viewModel(factory = StatisticsViewModelFactory(context, openedDay))
     val healthData = viewModel.healthData.value
     val selectedTimeframe = viewModel.selectedTimeframe.value
+    val currentChartStartDate by viewModel.currentStartDate.collectAsState() // Observe the start date
 
-    // Define all available metrics here:
+    // Use LaunchedEffect to react to changes in the 'openedDay' parameter
+    LaunchedEffect(openedDay) {
+        // This block will run whenever 'openedDay' changes.
+        // It updates the ViewModel's internal _currentOpenedDay StateFlow.
+        viewModel.updateOpenedDay(openedDay)
+    }
+
     val allMetrics = listOf(
         "Malaise" to { it: HealthData -> it.malaise },
         "Stress Level" to { it: HealthData -> it.stressLevel },
@@ -84,13 +375,37 @@ fun StatisticsScreen(openedDay: String) {
         "Sleep Readiness" to { it: HealthData -> it.sleepReadiness }
     )
 
-    // Keep track of selected metrics in state, initialized with some defaults
-    val selectedMetrics = remember { mutableStateListOf("Malaise", "Stress Level", "Sleep Quality") }
-
-    // State to control expansion
+    val selectedMetrics = remember { mutableStateListOf<String>() }
     var showAllMetrics by remember { mutableStateOf(false) }
+    var smoothingWindowSize by remember { mutableStateOf(5) } // State for smoothing window size
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Health Statistics") }) }) { paddingValues ->
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Health Statistics") },
+                actions = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CalendarToday,
+                            contentDescription = "Opened Day",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "$currentChartStartDate onwards", // Display the observed start date
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -107,21 +422,21 @@ fun StatisticsScreen(openedDay: String) {
             if (healthData.isEmpty()) {
                 EmptyDataInfo()
             } else {
-                HealthMetricsSummary(healthData) // This is your averages section
+                HealthMetricsSummary(healthData)
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
             // --- TOGGLES SECTION (Now with Expand/Collapse) ---
-            Column(modifier = Modifier.animateContentSize()) { // Apply animateContentSize here
+            Column(modifier = Modifier.animateContentSize()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { showAllMetrics = !showAllMetrics } // Toggle on row click
-                        .padding(vertical = 2.dp), // Add some padding for click area
+                        .clickable { showAllMetrics = !showAllMetrics }
+                        .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Select Metrics to Display", style = MaterialTheme.typography.titleMedium)
+                    Text("📈  Select Metrics to Display", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { showAllMetrics = !showAllMetrics }) {
                         Icon(
                             imageVector = if (showAllMetrics) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -133,7 +448,6 @@ fun StatisticsScreen(openedDay: String) {
 
                 // Conditionally display chips
                 if (showAllMetrics) {
-                    // Expanded view: Show all metrics in FlowRow
                     FlowRow {
                         allMetrics.forEach { (label, _) ->
                             FilterChip(
@@ -151,23 +465,19 @@ fun StatisticsScreen(openedDay: String) {
                         }
                     }
                 } else {
-                    // Collapsed view: Show only selected metrics (or a default few if none selected)
-                    // Take up to 3 selected metrics, or fallback to first 3 allMetrics if selected is empty.
                     val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
                         selectedMetrics.take(3)
                     } else {
-                        allMetrics.map { it.first }.take(1) // Display first 3 if no selected metrics
+                        allMetrics.map { it.first }.take(1)
                     }
 
                     FlowRow {
                         displayedMetrics.forEach { label ->
-                            // Find the full metric object to pass to FilterChip
                             val metric = allMetrics.firstOrNull { it.first == label }
                             metric?.let {
                                 FilterChip(
                                     selected = selectedMetrics.contains(label),
                                     onClick = {
-                                        // On click, expand and then handle selection
                                         showAllMetrics = true
                                         if (selectedMetrics.contains(label)) {
                                             selectedMetrics.remove(label)
@@ -180,7 +490,6 @@ fun StatisticsScreen(openedDay: String) {
                                 )
                             }
                         }
-                        // Optionally add a "..." chip if more metrics are hidden
                         if (allMetrics.size > displayedMetrics.size && selectedMetrics.size > 3 || (selectedMetrics.isEmpty() && allMetrics.size > 3)) {
                             FilterChip(
                                 selected = false,
@@ -192,7 +501,7 @@ fun StatisticsScreen(openedDay: String) {
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(24.dp)) // Space after toggles section
+            Spacer(modifier = Modifier.height(24.dp))
 
             // --- GRAPHS SECTION ---
             if (healthData.isNotEmpty()) {
@@ -202,7 +511,8 @@ fun StatisticsScreen(openedDay: String) {
                         HealthLineChart(
                             chartTitle = metricLabel,
                             dataPoints = healthData.map(it),
-                            labels = healthData.map { it.currentDate }
+                            labels = healthData.map { it.currentDate },
+                            smoothingWindowSize = smoothingWindowSize // Pass the smoothing window size
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
@@ -226,18 +536,6 @@ fun EmptyDataInfo() {
         Text("Start tracking your health to see statistics here!", style = MaterialTheme.typography.bodyMedium)
         Icon(Icons.Default.Addchart, contentDescription = "Information", modifier = Modifier.size(48.dp))
     }
-}
-
-@Composable
-fun HealthMetricChart(title: String, dataPoints: List<Float>, labels: List<String>, chartTitle: String) {
-    Text(title, style = MaterialTheme.typography.titleMedium)
-    Spacer(modifier = Modifier.height(8.dp))
-    HealthLineChart(
-        dataPoints = dataPoints,
-        labels = labels,
-        chartTitle = chartTitle
-    )
-    Spacer(modifier = Modifier.height(24.dp))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -285,7 +583,7 @@ fun HealthMetricsSummary(healthData: List<HealthData>) {
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Summary Statistics", style = MaterialTheme.typography.titleMedium)
+            Text("📌  Summary Statistics", style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(8.dp))
             stats.forEach { (label, value) ->
                 StatisticRow(label, String.format("%.1f", value))
@@ -302,194 +600,5 @@ fun StatisticRow(label: String, value: String) {
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
         Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-    }
-}
-
-@Composable
-fun calculatePointSpacing(count: Int): Dp {
-    val maxSpacing = 14f  // max spacing for very few points
-    val minSpacing = 2f   // min spacing for many points
-    val maxCount = 180f   // above this, spacing stays at min
-
-    val spacing = if (count >= maxCount) {
-        minSpacing
-    } else {
-        maxSpacing - ((count / maxCount) * (maxSpacing - minSpacing))
-    }
-
-    return spacing.dp
-}
-
-@SuppressLint("UnusedBoxWithConstraintsScope")
-@Composable
-fun HealthLineChart(
-    dataPoints: List<Float>,
-    labels: List<String>, // Expected ISO date strings "YYYY-MM-DD"
-    chartTitle: String,
-    modifier: Modifier = Modifier
-) {
-    val scrollState = rememberScrollState()
-
-    if (dataPoints.isEmpty()) {
-        Text("No data to display for $chartTitle.", style = MaterialTheme.typography.bodySmall)
-        return
-    }
-
-    val pointSpacing = calculatePointSpacing(dataPoints.size)
-    val totalWidth = (dataPoints.size - 1) * pointSpacing.value
-
-    val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val minRequiredChartWidth = with(density) {
-        val screenWidthDp = configuration.screenWidthDp.dp  // Convert Int to Dp
-        screenWidthDp // this is already Dp, no need to convert again
-    }
-    val contentModifier = if (dataPoints.size > 1) {
-        Modifier.width(totalWidth.dp.coerceAtLeast(minRequiredChartWidth))
-    } else {
-        Modifier.fillMaxWidth()
-    }
-
-    val minVal = dataPoints.minOrNull() ?: 0f
-    val maxVal = (dataPoints.maxOrNull() ?: 10f) + 0.1f
-    val valueRange = maxVal - minVal
-    val normalizedData = dataPoints.map { if (valueRange == 0f) 0.5f else (it - minVal) / valueRange }
-
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-
-    val dates = labels.mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
-
-    val weeklyTickIndices = dates.mapIndexedNotNull { index, date ->
-        if (date.dayOfWeek == DayOfWeek.MONDAY) index else null
-    }
-
-    val monthlyLabelIndices = dates.mapIndexedNotNull { index, date ->
-        if (date.dayOfMonth == 1 || (index == 0 && dates.isNotEmpty())) index else null
-    }
-
-    val monthFormatter = DateTimeFormatter.ofPattern("MMM", Locale.getDefault())
-
-    Column(modifier = modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .horizontalScroll(scrollState)
-        ) {
-            Canvas(
-                modifier = contentModifier.fillMaxHeight()
-            ) {
-                val lineWidth = 2.dp.toPx()
-                val xStep = pointSpacing.toPx()
-                val tickLength = 8.dp.toPx()
-
-                // Draw Y-axis grid lines
-                val numYLabels = 5
-                for (i in 0 until numYLabels) {
-                    val y = size.height - (i.toFloat() / (numYLabels - 1)) * size.height
-                    drawLine(
-                        color = gridColor,
-                        start = Offset(0f, y),
-                        end = Offset(size.width, y),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                }
-
-                // --- Draw Smoothed Line ---
-                if (dataPoints.size > 1) {
-                    val path = Path()
-                    val firstX = 0f
-                    val firstY = size.height - normalizedData[0] * size.height
-                    path.moveTo(firstX, firstY)
-
-                    for (i in 0 until dataPoints.size - 1) {
-                        val currentX = i * xStep
-                        val currentY = size.height - normalizedData[i] * size.height
-
-                        val nextX = (i + 1) * xStep
-                        val nextY = size.height - normalizedData[i + 1] * size.height
-
-                        val tension = 0.3f
-
-                        val controlX1 = currentX + (nextX - currentX) * tension
-                        val controlY1 = currentY
-
-                        val controlX2 = nextX - (nextX - currentX) * tension
-                        val controlY2 = nextY
-
-                        path.cubicTo(controlX1, controlY1, controlX2, controlY2, nextX, nextY)
-                    }
-
-                    // FIX: Added style = Stroke(width = lineWidth)
-                    drawPath(
-                        path = path,
-                        color = primaryColor,
-                        style = Stroke(width = lineWidth) // <--- THIS IS THE FIX
-                    )
-                }
-                // --- END Draw Smoothed Line ---
-
-                // Draw Weekly Ticks (Mondays only)
-                weeklyTickIndices.forEach { index ->
-                    val x = index * xStep
-                    drawLine(
-                        color = tickColor,
-                        start = Offset(x, size.height),
-                        end = Offset(x, size.height - tickLength),
-                        strokeWidth = 1.5.dp.toPx()
-                    )
-                }
-
-                // Draw Monthly Bars (Vertical lines for months)
-                monthlyLabelIndices.forEach { index ->
-                    val x = index * xStep
-                    drawLine(
-                        color = labelColor.copy(alpha = 0.3f),
-                        start = Offset(x, 0f),
-                        end = Offset(x, size.height),
-                        strokeWidth = 1.dp.toPx()
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Monthly labels
-        Box(
-            modifier = Modifier
-                .horizontalScroll(scrollState)
-                .then(contentModifier)
-                .fillMaxHeight(0.05f)
-        ) {
-            monthlyLabelIndices.forEach { index ->
-                val date = dates.getOrNull(index)
-                val rawText = date?.format(monthFormatter) ?: ""
-                val labelText = rawText.replaceFirstChar { it.uppercaseChar() } // Capitalize first letter
-
-                val xPosition = (index * pointSpacing.value).dp
-
-                if (labelText.isNotEmpty()) {
-                    Text(
-                        text = labelText,
-                        style = MaterialTheme.typography.labelMedium.copy( // Smaller text size (labelMedium)
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Normal // Normal font weight
-                        ),
-                        modifier = Modifier
-                            .offset(x = xPosition - (pointSpacing / 2))
-                            .wrapContentWidth(align = Alignment.CenterHorizontally)
-                            .align(Alignment.CenterStart),
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Visible,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
     }
 }
