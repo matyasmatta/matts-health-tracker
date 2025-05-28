@@ -411,7 +411,7 @@ fun StatisticsScreen(openedDay: String) {
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = currentChartStartDate,
+                            text = "$currentChartStartDate to $openedDay",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

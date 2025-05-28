@@ -165,13 +165,13 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
             mostTrendingMetric?.let { (metricName, diff) ->
                 val metricInfo = allMetricsWithGoodBadFlag.first { it.name == metricName }
                 val trend = when {
-                    diff > 0 && metricInfo.isHigherBetter -> "increased" // e.g., Sleep Length increased
-                    diff < 0 && !metricInfo.isHigherBetter -> "improved" // e.g., Malaise decreased
-                    diff > 0 && !metricInfo.isHigherBetter -> "worsened" // e.g., Stress Level increased
-                    diff < 0 && metricInfo.isHigherBetter -> "decreased" // e.g., Sleep Quality decreased
+                    diff > 0 && metricInfo.isHigherBetter -> "increased \uD83D\uDE4F" // e.g., Sleep Length increased
+                    diff < 0 && !metricInfo.isHigherBetter -> "improved \uD83D\uDE4F" // e.g., Malaise decreased
+                    diff > 0 && !metricInfo.isHigherBetter -> "worsened \uD83E\uDEE4" // e.g., Stress Level increased
+                    diff < 0 && metricInfo.isHigherBetter -> "decreased \uD83E\uDEE4" // e.g., Sleep Quality decreased
                     else -> "changed" // Fallback, though should be covered
                 }
-                summary = "$metricName has $trend 🙏"
+                summary = "$metricName has $trend"
             } ?: run {
                 summary = "Could not determine trend."
             }
