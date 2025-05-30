@@ -67,6 +67,13 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Applies a Savitzky-Golay filter to smooth a list of data points.
@@ -393,6 +400,12 @@ fun StatisticsScreen(openedDay: String) {
     val summarySentence by viewModel.summarySentence
     val metricDifferences by viewModel.metricDifferences
 
+    // NEW: Collect correlation states
+    val correlations by viewModel.correlations.collectAsState()
+    val isCalculatingCorrelations by viewModel.isCalculatingCorrelations.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
+
+
     LaunchedEffect(openedDay) {
         viewModel.updateOpenedDay(openedDay)
     }
@@ -477,10 +490,19 @@ fun StatisticsScreen(openedDay: String) {
                     metricDifferences = metricDifferences,
                     allMetricsWithGoodBadFlag = allMetricsWithGoodBadFlagUI
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp)) // Spacer after Summary Statistics
+
+                // MOVED: Correlation Section is now right below Summary Statistics
+                CorrelationSection(
+                    correlations = correlations,
+                    isCalculatingCorrelations = isCalculatingCorrelations,
+                    onCalculateCorrelationsClick = { coroutineScope.launch { viewModel.calculateCorrelations() } },
+                    onUpdatePreference = { id, delta -> viewModel.updateCorrelationPreference(id, delta) }
+                )
+                Spacer(modifier = Modifier.height(12.dp)) // Spacer after Correlation Section
             }
 
-            Column(modifier = Modifier.animateContentSize()) {
+            Column(modifier = Modifier.animateContentSize()) { // This is "Select Metrics to Display"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -500,8 +522,6 @@ fun StatisticsScreen(openedDay: String) {
                 }
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // --- MODIFICATION START ---
-                // Conditional display for filter chips
                 if (showAllMetrics) {
                     FlowRow {
                         allMetrics.forEach { (label, _) ->
@@ -520,14 +540,13 @@ fun StatisticsScreen(openedDay: String) {
                         }
                     }
                 } else {
-                    // When not expanded and no metrics are selected, show only "Malaise" and "..."
                     if (selectedMetrics.isEmpty() && healthData.isNotEmpty()) {
                         FlowRow {
                             FilterChip(
                                 selected = false,
                                 onClick = {
-                                    selectedMetrics.add("Malaise") // Automatically select Malaise
-                                    showAllMetrics = true // And open the expanded view
+                                    selectedMetrics.add("Malaise")
+                                    showAllMetrics = true
                                 },
                                 label = { Text("Malaise") },
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
@@ -540,11 +559,10 @@ fun StatisticsScreen(openedDay: String) {
                             )
                         }
                     } else {
-                        // Original logic for showing selected metrics or first few if expanded
                         val displayedMetrics = if (selectedMetrics.isNotEmpty()) {
                             selectedMetrics.take(3)
                         } else {
-                            allMetrics.map { it.first }.take(3) // This branch won't be hit if selectedMetrics is empty AND healthData is not empty due to the new if block above
+                            allMetrics.map { it.first }.take(3)
                         }
 
                         FlowRow {
@@ -577,14 +595,9 @@ fun StatisticsScreen(openedDay: String) {
                         }
                     }
                 }
-                // --- END MODIFICATION ---
             }
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(24.dp)) // Spacer before the charts
 
-            // --- MODIFICATION START ---
-            // Remove the Text("Select metrics above to view graphs.") when no metrics are selected
-            // This entire `else if` block should be removed or modified.
-            // The logic below now only proceeds if selectedMetrics is NOT empty.
             if (healthData.isNotEmpty() && selectedMetrics.isNotEmpty()) {
                 selectedMetrics.forEach { metricLabel ->
                     val extractor = allMetrics.firstOrNull { it.first == metricLabel }?.second
@@ -599,7 +612,7 @@ fun StatisticsScreen(openedDay: String) {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
-            // --- END MODIFICATION ---
+            // Removed old Spacer and CorrelationSection from here
         }
     }
 }
@@ -645,13 +658,13 @@ fun TimeframeSelector(
 }
 
 @SuppressLint("DefaultLocale")
-@OptIn(ExperimentalMaterial3Api::class) // For Card and FilterChip
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthMetricsSummary(
     healthData: List<HealthData>,
     summarySentence: String,
-    metricDifferences: Map<String, Float>, // <-- Added parameter for differences
-    allMetricsWithGoodBadFlag: List<MetricInfo> // <-- Added parameter for metric info
+    metricDifferences: Map<String, Float>,
+    allMetricsWithGoodBadFlag: List<MetricInfo>
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -697,14 +710,14 @@ fun HealthMetricsSummary(
 
             if (expanded) {
                 stats.forEach { (label, value) ->
-                    val change = metricDifferences[label] // Get the difference for this metric
+                    val change = metricDifferences[label]
                     val metricInfo = allMetricsWithGoodBadFlag.firstOrNull { it.name == label }
 
                     StatisticRow(
                         label = label,
                         value = String.format("%.1f", value),
-                        change = change, // Pass the change
-                        isHigherBetter = metricInfo?.isHigherBetter // Pass the good/bad flag
+                        change = change,
+                        isHigherBetter = metricInfo?.isHigherBetter
                     )
                 }
             } else {
@@ -719,7 +732,6 @@ fun HealthMetricsSummary(
     }
 }
 
-// --- MODIFIED StatisticRow Composable ---
 @Composable
 fun StatisticRow(label: String, value: String, change: Float? = null, isHigherBetter: Boolean? = null) {
     Row(
@@ -731,15 +743,12 @@ fun StatisticRow(label: String, value: String, change: Float? = null, isHigherBe
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
             change?.let { diff ->
-                // Determine color based on difference and isHigherBetter flag
-                val changeColor = if (isHigherBetter != null) {
-                    if (diff > 0 && isHigherBetter) Color.Green // Positive change is good
-                    else if (diff < 0 && !isHigherBetter) Color.Green // Negative change is good
-                    else if (diff > 0 && !isHigherBetter) Color.Red // Positive change is bad
-                    else if (diff < 0 && isHigherBetter) Color.Red // Negative change is bad
-                    else MaterialTheme.colorScheme.onSurfaceVariant // No significant change, or zero
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant // Default if flag is unknown
+                val changeColor = when {
+                    isHigherBetter == true && diff > 0 -> Color.Green // Positive change is good
+                    isHigherBetter == false && diff < 0 -> Color.Green // Negative change is good
+                    isHigherBetter == true && diff < 0 -> Color.Red // Negative change is bad
+                    isHigherBetter == false && diff > 0 -> Color.Red // Positive change is bad
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant // No significant change, or zero, or unknown
                 }
 
                 val formattedDiff = String.format(Locale.getDefault(), "%+.1f", diff)
@@ -751,6 +760,130 @@ fun StatisticRow(label: String, value: String, change: Float? = null, isHigherBe
                     color = changeColor,
                     fontWeight = FontWeight.Bold
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CorrelationSection(
+    correlations: List<Correlation>,
+    isCalculatingCorrelations: Boolean,
+    onCalculateCorrelationsClick: () -> Unit,
+    onUpdatePreference: (Long, Int) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .padding(top = 6.dp, start = 16.dp, end = 16.dp, bottom = 16.dp)
+                .animateContentSize()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("🔗 Correlations", style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expanded) "Collapse correlations" else "Expand correlations"
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (expanded) {
+                OutlinedButton(
+                    onClick = onCalculateCorrelationsClick,
+                    enabled = !isCalculatingCorrelations,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isCalculatingCorrelations) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Calculating...")
+                    } else {
+                        Text("Calculate Correlations")
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (correlations.isEmpty() && !isCalculatingCorrelations) {
+                    Text(
+                        "No correlations found. Click 'Calculate Correlations' to analyze your data.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                    )
+                } else {
+                    correlations.forEachIndexed { index, correlation ->
+                        CorrelationItem(correlation, onUpdatePreference)
+                        if (index < correlations.lastIndex) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = if (correlations.isNotEmpty()) "Tap to view ${correlations.size} discovered relationships" else "Tap to calculate health correlations",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CorrelationItem(correlation: Correlation, onUpdatePreference: (Long, Int) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                // FIXED: Changed metricA to symptomA and metricB to symptomB
+                text = "${correlation.symptomA} ${
+                    when {
+                        // FIXED: Changed correlationValue to confidence
+                        correlation.confidence > 0 -> "increases with"
+                        correlation.confidence < 0 -> "decreases with"
+                        else -> "is unrelated to" // Should not happen with meaningful correlations
+                    }
+                } ${correlation.symptomB}", // FIXED: Changed metricB to symptomB
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                // FIXED: Changed correlationValue to confidence
+                text = "Strength: ${String.format("%.2f", correlation.confidence)} | Preference: ${correlation.preferenceScore}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = { onUpdatePreference(correlation.id, 1) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Increase preference")
+            }
+            IconButton(
+                onClick = { onUpdatePreference(correlation.id, -1) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Decrease preference")
             }
         }
     }

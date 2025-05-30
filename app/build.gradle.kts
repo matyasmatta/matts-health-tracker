@@ -19,7 +19,7 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = 1
-        versionName = "1.7.7"
+        versionName = "1.7.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -73,4 +73,5 @@ dependencies {
     implementation("com.google.android.gms:play-services-drive:17.0.0")
     implementation("com.google.http-client:google-http-client-gson:1.41.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
+    implementation('org.apache.commons:commons-math3:3.6.1')
 }
