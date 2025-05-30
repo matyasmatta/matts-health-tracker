@@ -118,19 +118,55 @@ fun applySavitzkyGolayFilter(data: List<Float>, windowSize: Int, polynomialOrder
     return smoothedData
 }
 
+
 @Composable
 fun calculatePointSpacing(count: Int): Dp {
-    val maxSpacing = 50f  // Maximum spacing for very few points
-    val minSpacing = 2f   // Minimum spacing for many points
-    val maxCount = 180f   // Above this count, spacing stays at minimum
+    // Get the screen width in Dp
+    val configuration = LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp.toFloat() // Convert to float for calculations
 
-    val spacing = if (count >= maxCount) {
-        minSpacing
+    // Define the scale factor to reduce the effective width
+    val scaleFactor = 0.95f // Makes the chart 5% smaller
+
+    // Constants for the logic
+    val daysForOneMonth = 30f // Approximately one month
+    val daysForSixMonths = 180f // Approximately six months
+    val targetWidthMultiplierForSixMonths = 3f // 300% of screen width
+
+    val spacing: Float
+
+    // Calculate the effective screen width after applying the scale factor
+    val effectiveScreenWidthDp = screenWidthDp * scaleFactor
+
+    if (count <= daysForOneMonth) {
+        // Up to one month: fill the effective screen width
+        // Ensure count is at least 1 to avoid division by zero
+        spacing = effectiveScreenWidthDp / (count.coerceAtLeast(1).toFloat())
     } else {
-        maxSpacing - ((count / maxCount) * (maxSpacing - minSpacing))
+        // More than one month: dynamic scaling based on the effective screen width
+        // Calculate 'a' and 'b' for the linear function M = aN + b
+        // M = targetWidthMultiplier
+        // N = count
+        // (x1, y1) = (daysForOneMonth, 1f) -> M = 1 at 30 days
+        // (x2, y2) = (daysForSixMonths, targetWidthMultiplierForSixMonths) -> M = 3 at 180 days
+
+        val a = (targetWidthMultiplierForSixMonths - 1f) / (daysForSixMonths - daysForOneMonth)
+        val b = 1f - (a * daysForOneMonth)
+
+        // Calculate the target width multiplier based on the current count
+        val targetWidthMultiplier = a * count + b
+
+        // Calculate the spacing
+        // totalWidth = targetWidthMultiplier * effectiveScreenWidthDp
+        // totalWidth = count * spacing
+        // spacing = (targetWidthMultiplier * effectiveScreenWidthDp) / count
+        spacing = (targetWidthMultiplier * effectiveScreenWidthDp) / count
     }
 
-    return spacing.dp
+    // Add a minimum spacing to prevent points from overlapping excessively
+    // This is a practical safeguard, adjust as needed
+    val minPracticalSpacing = 2.dp.value
+    return spacing.dp.coerceAtLeast(minPracticalSpacing.dp)
 }
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
