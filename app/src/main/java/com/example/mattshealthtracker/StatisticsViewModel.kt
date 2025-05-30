@@ -21,10 +21,12 @@ import java.util.Locale // <-- Ensure this is imported for DateTimeFormatter.ofP
 
 // Enum to define available timeframes
 enum class Timeframe(val label: String) {
-    TWO_WEEKS("2 Weeks"), // <-- ADD THIS LINE
+    ONE_WEEK("1 Week"), // <-- ADDED THIS LINE
+    TWO_WEEKS("2 Weeks"),
     ONE_MONTH("1 Month"),
     THREE_MONTHS("3 Months"),
-    SIX_MONTHS("6 Months")
+    SIX_MONTHS("6 Months"),
+    ONE_YEAR("1 Year") // <-- ADDED THIS LINE
 }
 
 class StatisticsViewModel(applicationContext: Context, private val initialOpenedDay: String) : ViewModel() {
@@ -98,18 +100,22 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         viewModelScope.launch(Dispatchers.IO) {
             val endDate = referenceDate
             val startDate = when (_selectedTimeframe.value) {
-                Timeframe.TWO_WEEKS -> endDate.minusWeeks(2).plusDays(1) // <-- ADD THIS CASE
+                Timeframe.ONE_WEEK -> endDate.minusWeeks(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.TWO_WEEKS -> endDate.minusWeeks(2).plusDays(1)
                 Timeframe.ONE_MONTH -> endDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> endDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> endDate.minusMonths(6).plusDays(1)
+                Timeframe.ONE_YEAR -> endDate.minusYears(1).plusDays(1) // <-- ADDED THIS CASE
             }
 
             val prevEndDate = startDate.minusDays(1)
             val prevStartDate = when (_selectedTimeframe.value) {
-                Timeframe.TWO_WEEKS -> prevEndDate.minusWeeks(2).plusDays(1) // <-- ADD THIS CASE
+                Timeframe.ONE_WEEK -> prevEndDate.minusWeeks(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.TWO_WEEKS -> prevEndDate.minusWeeks(2).plusDays(1)
                 Timeframe.ONE_MONTH -> prevEndDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> prevEndDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> prevEndDate.minusMonths(6).plusDays(1)
+                Timeframe.ONE_YEAR -> prevEndDate.minusYears(1).plusDays(1) // <-- ADDED THIS CASE
             }
 
             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
