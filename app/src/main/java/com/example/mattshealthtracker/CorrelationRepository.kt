@@ -3,10 +3,13 @@ package com.example.mattshealthtracker
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
+import android.os.Environment // Import Environment for external storage paths
 import android.util.Log
+import java.io.File // For file operations
+import java.io.FileWriter // For writing to CSV
 import kotlin.math.abs
 
-class CorrelationRepository(context: Context) {
+class CorrelationRepository(private val context: Context) { // Make context a private val property
 
     private val dbHelper = CorrelationDatabaseHelper(context)
 
@@ -17,8 +20,21 @@ class CorrelationRepository(context: Context) {
 
     // --- Core Operations ---
 
+    // This method will now trigger the CSV export internally after calculation
     fun calculateAndStoreAllCorrelations(allHealthData: List<HealthData>): List<Correlation> {
-        return dbHelper.calculateAndStoreAllCorrelations(allHealthData)
+        val calculatedCorrelations = dbHelper.calculateAndStoreAllCorrelations(allHealthData)
+
+        // After successful calculation and storage, export the full database
+        // Note: dbHelper.calculateAndStoreAllCorrelations handles its own DB closing.
+        // We'll export from a new readable instance to ensure we get the latest.
+        val exportedFilePath = exportCorrelationsToCsv() // Call the new export function
+        if (exportedFilePath != null) {
+            Log.d(TAG, "Database export complete. File: $exportedFilePath")
+        } else {
+            Log.e(TAG, "Database export failed.")
+        }
+
+        return calculatedCorrelations // Return the list of correlations that were stored/updated
     }
 
     fun updatePreference(correlationId: Long, delta: Int) {
@@ -37,7 +53,7 @@ class CorrelationRepository(context: Context) {
         }
     }
 
-    // --- Query Operations (No changes needed here, as the change is in the helper) ---
+    // --- Query Operations ---
 
     fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
         val db = dbHelper.readableDatabase
@@ -64,8 +80,10 @@ class CorrelationRepository(context: Context) {
             )
 
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
-            // Apply the filter: keep only the highest strength correlation for each base pair
+            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB before filtering (getTop).")
+
             val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+            Log.d(TAG, "Filtered down to ${filteredCorrelations.size} correlations after filtering (getTop).")
 
             return filteredCorrelations
                 .sortedWith(
@@ -96,16 +114,18 @@ class CorrelationRepository(context: Context) {
             cursor = db.query(
                 CorrelationDatabaseHelper.TABLE_CORRELATIONS,
                 null,
-                null,
-                null,
+                null, // No selection for getAllCorrelations
+                null, // No selection arguments
                 null,
                 null,
                 orderBy,
                 null
             )
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
-            // Apply the filter: keep only the highest strength correlation for each base pair
+            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB before filtering (getAll).")
+
             val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+            Log.d(TAG, "Filtered down to ${filteredCorrelations.size} correlations after filtering (getAll).")
 
             return filteredCorrelations
                 .sortedWith(
@@ -133,13 +153,14 @@ class CorrelationRepository(context: Context) {
     private fun filterForHighestStrengthPerBasePair(correlations: List<Correlation>): List<Correlation> {
         // The key is now solely based on the base symptom pair, excluding lag,
         // and using normalized (trimmed, lowercase) names.
-        Log.d(TAG, "Filtering: Received ${correlations.size} correlations to filter")
         val bestCorrelationsPerPair = mutableMapOf<String, Correlation>()
+
+        Log.d(TAG, "Starting filterForHighestStrengthPerBasePair with ${correlations.size} input correlations.")
 
         for (correlation in correlations) {
             // Normalize symptom names: trim whitespace and convert to lowercase
-            val cleanedSymptomA = correlation.baseSymptomA.trim().lowercase()
-            val cleanedSymptomB = correlation.baseSymptomB.trim().lowercase()
+            val cleanedSymptomA = correlation.baseSymptomA.trim().toLowerCase()
+            val cleanedSymptomB = correlation.baseSymptomB.trim().toLowerCase()
 
             // Create a consistent, normalized key for the base symptom pair
             // Always put the alphabetically smaller one first to ensure consistency
@@ -154,13 +175,14 @@ class CorrelationRepository(context: Context) {
             val existingBest = bestCorrelationsPerPair[pairKey]
 
             // If no correlation exists for this pair, or the current one is stronger, update it.
-            if (existingBest == null || abs(correlation.confidence) >= abs(existingBest.confidence)) {
+            if (existingBest == null || abs(correlation.confidence) > abs(existingBest.confidence)) {
                 bestCorrelationsPerPair[pairKey] = correlation
                 Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}) as best for pair '$pairKey'.")
             } else {
                 Log.d(TAG, "Filtering: Keeping '${existingBest.getDisplayNameA()}' vs '${existingBest.getDisplayNameB()}' (Conf: ${"%.2f".format(existingBest.confidence)}) for pair '$pairKey' over '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}).")
             }
         }
+        Log.d(TAG, "Finished filterForHighestStrengthPerBasePair. Resulting size: ${bestCorrelationsPerPair.size}")
         return bestCorrelationsPerPair.values.toList()
     }
 
@@ -207,6 +229,75 @@ class CorrelationRepository(context: Context) {
             }
         }
         return correlations
+    }
+
+    /**
+     * Exports the entire correlations table to a CSV file.
+     * The file is saved in the app's external files directory (Downloads).
+     * @return The absolute path to the created CSV file, or null if an error occurred.
+     */
+    fun exportCorrelationsToCsv(): String? {
+        val db = dbHelper.readableDatabase
+        var cursor: Cursor? = null
+        var filePath: String? = null
+        try {
+            // Query all data from the correlations table
+            cursor = db.rawQuery("SELECT * FROM ${CorrelationDatabaseHelper.TABLE_CORRELATIONS}", null)
+
+            if (cursor == null || cursor.count == 0) {
+                Log.d(TAG, "No data to export for correlations.")
+                return null
+            }
+
+            // Get the app-specific external downloads directory
+            // This directory is located at Android/data/com.your.package.name/files/Downloads
+            // No runtime permissions are needed for this location.
+            val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            downloadsDir?.mkdirs() // Ensure the directory exists
+
+            val fileName = "correlations_export_${System.currentTimeMillis()}.csv"
+            val file = File(downloadsDir, fileName)
+            filePath = file.absolutePath
+
+            FileWriter(file).use { writer -> // Use 'use' to ensure writer is closed
+                // Write header row (column names)
+                val columnNames = cursor.columnNames
+                writer.append(columnNames.joinToString(",") { it.replace(",", "") }) // Sanitize commas in column names
+                writer.append("\n")
+
+                // Write data rows
+                while (cursor.moveToNext()) {
+                    val rowData = mutableListOf<String>()
+                    for (i in columnNames.indices) {
+                        val value = cursor.getString(i) ?: "" // Get string value, default to empty string if null
+                        rowData.add(escapeCsv(value)) // Escape values for CSV (handle commas, quotes, newlines)
+                    }
+                    writer.append(rowData.joinToString(","))
+                    writer.append("\n")
+                }
+            } // writer.close() is called automatically by .use{}
+
+            Log.d(TAG, "Correlations exported successfully to: $filePath")
+            return filePath
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error exporting correlations to CSV: ${e.message}", e)
+            return null
+        } finally {
+            cursor?.close()
+            // db.close() is managed by CorrelationDatabaseHelper's own methods
+            // or by the caller if this db instance was passed in.
+            // In this specific helper, we opened it, so we close it here.
+            db.close()
+        }
+    }
+
+    // Helper function to escape values for CSV (handle commas, double quotes, and newlines)
+    private fun escapeCsv(value: String): String {
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"${value.replace("\"", "\"\"")}\"" // Enclose in quotes and escape internal quotes
+        }
+        return value
     }
 
     fun close() {
