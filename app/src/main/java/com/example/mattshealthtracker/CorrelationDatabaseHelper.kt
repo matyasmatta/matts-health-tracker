@@ -13,7 +13,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
     companion object {
         const val DATABASE_NAME = "correlations.db"
-        const val DATABASE_VERSION = 7 // Increment version for schema change and new logic
+        const val DATABASE_VERSION = 10 // Increment version for schema change and new logic
         const val TABLE_CORRELATIONS = "correlations"
         const val COLUMN_ID = "_id"
 
@@ -33,7 +33,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
         const val COLUMN_PREFERENCE_SCORE = "preference_score"
         const val COLUMN_LAST_CALCULATED_DATE = "last_calculated_date"
 
-        private const val CORRELATION_THRESHOLD = 0.6
+        private const val CORRELATION_THRESHOLD = 0.2
         private const val MIN_DATA_POINTS_FOR_CORRELATION = 15
         private const val MAX_LAG_DAYS = 7 // Max lag for correlations
 

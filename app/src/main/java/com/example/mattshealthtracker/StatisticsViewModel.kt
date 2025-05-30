@@ -7,11 +7,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-// No longer need .data subpackage import if files are in root
-// import com.example.mattshealthtracker.HealthData // Already in this package
-// import com.example.mattshealthtracker.HealthDatabaseHelper // Already in this package
-import com.example.mattshealthtracker.Correlation // Import Correlation data class (now in root)
-import com.example.mattshealthtracker.CorrelationDatabaseHelper // Import CorrelationDatabaseHelper (now in root)
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,7 +29,9 @@ enum class Timeframe(val label: String) {
 
 class StatisticsViewModel(applicationContext: Context, private val initialOpenedDay: String) : ViewModel() {
     private val healthDatabaseHelper = HealthDatabaseHelper(applicationContext)
-    private val correlationDatabaseHelper = CorrelationDatabaseHelper(applicationContext) // NEW: Correlation database helper
+    // REMOVE: private val correlationDatabaseHelper = CorrelationDatabaseHelper(applicationContext)
+    // ADD: Use CorrelationRepository instead
+    private val correlationRepository = CorrelationRepository(applicationContext)
 
     private val _currentOpenedDay = MutableStateFlow(initialOpenedDay)
     val currentOpenedDay: StateFlow<String> = _currentOpenedDay.asStateFlow()
@@ -198,8 +195,8 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     // NEW: Function to load existing correlations
     fun loadCorrelations() {
         viewModelScope.launch(Dispatchers.IO) {
-            // Using getTopCorrelations() as it implies a filtered/prioritized list suitable for UI
-            val loaded = correlationDatabaseHelper.getTopCorrelations()
+            // Using getTopCorrelations() from CorrelationRepository (which includes the filtering)
+            val loaded = correlationRepository.getTopCorrelations()
             _correlations.value = loaded
             Log.d("StatisticsViewModel", "Loaded ${loaded.size} correlations.")
         }
@@ -213,10 +210,6 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
             // Fetch all available health data, as correlation might need a longer history
             val historicalData = healthDatabaseHelper.fetchAllData()
 
-            // It's crucial that HealthData also resides in the root package
-            // or is correctly imported if it's in another package.
-            // Assuming HealthData is also in com.example.mattshealthtracker based on your earlier code.
-
             if (historicalData.size < 15) { // Minimum data points for meaningful correlation (adjust as needed)
                 Log.d("StatisticsViewModel", "Not enough data for correlation calculation (min 15 days needed). Found: ${historicalData.size}")
                 _isCalculatingCorrelations.value = false
@@ -225,8 +218,8 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
             }
 
             try {
-                // This call will now directly use CorrelationDatabaseHelper from the root package
-                val newlyDetected = correlationDatabaseHelper.calculateAndStoreAllCorrelations(historicalData)
+                // This call will now use CorrelationRepository to calculate and store correlations
+                val newlyDetected = correlationRepository.calculateAndStoreAllCorrelations(historicalData)
                 Log.d("StatisticsViewModel", "Calculated and stored ${newlyDetected.size} new/updated correlations.")
                 loadCorrelations() // Reload all correlations after calculation to update UI
             } catch (e: Exception) {
@@ -240,7 +233,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     // NEW: Function to update a correlation's preference score
     fun updateCorrelationPreference(correlationId: Long, delta: Int) {
         viewModelScope.launch(Dispatchers.IO) {
-            correlationDatabaseHelper.updatePreference(correlationId, delta)
+            correlationRepository.updatePreference(correlationId, delta)
             loadCorrelations() // Refresh list after update to show new scores
         }
     }
@@ -248,7 +241,9 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     override fun onCleared() {
         super.onCleared()
         healthDatabaseHelper.close()
-        correlationDatabaseHelper.close() // NEW: Close correlation database helper
+        // REMOVE: correlationDatabaseHelper.close()
+        // ADD: Close correlationRepository (which will close its internal dbHelper)
+        correlationRepository.close()
     }
 }
 

@@ -37,7 +37,7 @@ class CorrelationRepository(context: Context) {
         }
     }
 
-    // --- Query Operations (No changes here, as the change is in the helper) ---
+    // --- Query Operations (No changes needed here, as the change is in the helper) ---
 
     fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
         val db = dbHelper.readableDatabase
@@ -128,26 +128,33 @@ class CorrelationRepository(context: Context) {
      * Filters a list of correlations to ensure only the single highest strength correlation
      * is kept for each unique pair of base symptoms (e.g., "Malaise" and "Stress Level"),
      * regardless of their lag, window size, or calculation type.
+     * Symptom names are normalized to lowercase and trimmed for robust comparison.
      */
     private fun filterForHighestStrengthPerBasePair(correlations: List<Correlation>): List<Correlation> {
-        // The key is now solely based on the base symptom pair, excluding lag.
-        // This ensures only one entry per unique (symptomA, symptomB) pair is kept.
+        // The key is now solely based on the base symptom pair, excluding lag,
+        // and using normalized (trimmed, lowercase) names.
+        Log.d(TAG, "Filtering: Received ${correlations.size} correlations to filter")
         val bestCorrelationsPerPair = mutableMapOf<String, Correlation>()
 
         for (correlation in correlations) {
+            // Normalize symptom names: trim whitespace and convert to lowercase
+            val cleanedSymptomA = correlation.baseSymptomA.trim().lowercase()
+            val cleanedSymptomB = correlation.baseSymptomB.trim().lowercase()
+
             // Create a consistent, normalized key for the base symptom pair
-            val (s1, s2) = if (correlation.baseSymptomA <= correlation.baseSymptomB) {
-                correlation.baseSymptomA to correlation.baseSymptomB
+            // Always put the alphabetically smaller one first to ensure consistency
+            val (s1, s2) = if (cleanedSymptomA <= cleanedSymptomB) {
+                cleanedSymptomA to cleanedSymptomB
             } else {
-                correlation.baseSymptomB to correlation.baseSymptomA
+                cleanedSymptomB to cleanedSymptomA
             }
-            // KEY: Only includes base symptom names
+            // KEY: Only includes normalized base symptom names
             val pairKey = "$s1-$s2"
 
             val existingBest = bestCorrelationsPerPair[pairKey]
 
             // If no correlation exists for this pair, or the current one is stronger, update it.
-            if (existingBest == null || abs(correlation.confidence) > abs(existingBest.confidence)) {
+            if (existingBest == null || abs(correlation.confidence) >= abs(existingBest.confidence)) {
                 bestCorrelationsPerPair[pairKey] = correlation
                 Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}) as best for pair '$pairKey'.")
             } else {
