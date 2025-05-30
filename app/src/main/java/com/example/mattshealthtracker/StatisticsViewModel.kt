@@ -7,8 +7,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.mattshealthtracker.HealthData
-import com.example.mattshealthtracker.HealthDatabaseHelper
+// No longer need .data subpackage import if files are in root
+// import com.example.mattshealthtracker.HealthData // Already in this package
+// import com.example.mattshealthtracker.HealthDatabaseHelper // Already in this package
+import com.example.mattshealthtracker.Correlation // Import Correlation data class (now in root)
+import com.example.mattshealthtracker.CorrelationDatabaseHelper // Import CorrelationDatabaseHelper (now in root)
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,20 +20,21 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale // <-- Ensure this is imported for DateTimeFormatter.ofPattern
+import java.util.Locale
 
 // Enum to define available timeframes
 enum class Timeframe(val label: String) {
-    ONE_WEEK("1 Week"), // <-- ADDED THIS LINE
+    ONE_WEEK("1 Week"),
     TWO_WEEKS("2 Weeks"),
     ONE_MONTH("1 Month"),
     THREE_MONTHS("3 Months"),
     SIX_MONTHS("6 Months"),
-    ONE_YEAR("1 Year") // <-- ADDED THIS LINE
+    ONE_YEAR("1 Year")
 }
 
 class StatisticsViewModel(applicationContext: Context, private val initialOpenedDay: String) : ViewModel() {
-    private val dbHelper = HealthDatabaseHelper(applicationContext)
+    private val healthDatabaseHelper = HealthDatabaseHelper(applicationContext)
+    private val correlationDatabaseHelper = CorrelationDatabaseHelper(applicationContext) // NEW: Correlation database helper
 
     private val _currentOpenedDay = MutableStateFlow(initialOpenedDay)
     val currentOpenedDay: StateFlow<String> = _currentOpenedDay.asStateFlow()
@@ -46,10 +50,8 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     private val _summarySentence = mutableStateOf("")
     val summarySentence: State<String> = _summarySentence
 
-    // --- NEW: State for metric differences ---
     private val _metricDifferences = mutableStateOf<Map<String, Float>>(emptyMap())
     val metricDifferences: State<Map<String, Float>> = _metricDifferences
-    // --- END NEW ADDITION ---
 
     private val _selectedTimeframe = mutableStateOf(Timeframe.ONE_MONTH)
     val selectedTimeframe: State<Timeframe> = _selectedTimeframe
@@ -57,7 +59,6 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     private var referenceDate: LocalDate = LocalDate.parse(initialOpenedDay)
 
     // Define all metrics and their extractors, now also with a `isHigherBetter` flag
-    // This makes the logic for coloring the change clearer
     private val allMetricsWithGoodBadFlag = listOf(
         MetricInfo("Malaise", { it.malaise }, isHigherBetter = false),
         MetricInfo("Stress Level", { it.stressLevel }, isHigherBetter = false),
@@ -72,6 +73,13 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         MetricInfo("Sleep Readiness", { it.sleepReadiness }, isHigherBetter = true)
     )
 
+    // NEW: State for Correlations
+    private val _correlations = MutableStateFlow<List<Correlation>>(emptyList())
+    val correlations: StateFlow<List<Correlation>> = _correlations.asStateFlow()
+
+    private val _isCalculatingCorrelations = MutableStateFlow(false)
+    val isCalculatingCorrelations: StateFlow<Boolean> = _isCalculatingCorrelations.asStateFlow()
+
     init {
         viewModelScope.launch(Dispatchers.IO) {
             _currentOpenedDay.collectLatest { dayString ->
@@ -83,6 +91,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
                 }
             }
         }
+        loadCorrelations() // NEW: Load existing correlations on ViewModel initialization
     }
 
     fun updateTimeframe(timeframe: Timeframe) {
@@ -100,32 +109,32 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         viewModelScope.launch(Dispatchers.IO) {
             val endDate = referenceDate
             val startDate = when (_selectedTimeframe.value) {
-                Timeframe.ONE_WEEK -> endDate.minusWeeks(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.ONE_WEEK -> endDate.minusWeeks(1).plusDays(1)
                 Timeframe.TWO_WEEKS -> endDate.minusWeeks(2).plusDays(1)
                 Timeframe.ONE_MONTH -> endDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> endDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> endDate.minusMonths(6).plusDays(1)
-                Timeframe.ONE_YEAR -> endDate.minusYears(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.ONE_YEAR -> endDate.minusYears(1).plusDays(1)
             }
 
             val prevEndDate = startDate.minusDays(1)
             val prevStartDate = when (_selectedTimeframe.value) {
-                Timeframe.ONE_WEEK -> prevEndDate.minusWeeks(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.ONE_WEEK -> prevEndDate.minusWeeks(1).plusDays(1)
                 Timeframe.TWO_WEEKS -> prevEndDate.minusWeeks(2).plusDays(1)
                 Timeframe.ONE_MONTH -> prevEndDate.minusMonths(1).plusDays(1)
                 Timeframe.THREE_MONTHS -> prevEndDate.minusMonths(3).plusDays(1)
                 Timeframe.SIX_MONTHS -> prevEndDate.minusMonths(6).plusDays(1)
-                Timeframe.ONE_YEAR -> prevEndDate.minusYears(1).plusDays(1) // <-- ADDED THIS CASE
+                Timeframe.ONE_YEAR -> prevEndDate.minusYears(1).plusDays(1)
             }
 
             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
             _currentStartDate.value = startDate.format(formatter)
 
-            val currentIntervalData = dbHelper.fetchDataInDateRange(startDate.format(formatter), endDate.format(formatter))
+            val currentIntervalData = healthDatabaseHelper.fetchDataInDateRange(startDate.format(formatter), endDate.format(formatter))
             _healthData.value = currentIntervalData
 
-            val previousIntervalData = dbHelper.fetchDataInDateRange(prevStartDate.format(formatter), prevEndDate.format(formatter))
+            val previousIntervalData = healthDatabaseHelper.fetchDataInDateRange(prevStartDate.format(formatter), prevEndDate.format(formatter))
             _previousIntervalHealthData.value = previousIntervalData
 
             val (summary, diffs) = generateSummaryAndDifferences(currentIntervalData, previousIntervalData)
@@ -138,7 +147,6 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         return this.map(extractor).average().toFloat().takeIf { !it.isNaN() } ?: 0f
     }
 
-    // --- MODIFIED FUNCTION ---
     private fun generateSummaryAndDifferences(
         currentData: List<HealthData>,
         previousData: List<HealthData>
@@ -186,9 +194,65 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         }
         return summary to diffMap
     }
+
+    // NEW: Function to load existing correlations
+    fun loadCorrelations() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Using getTopCorrelations() as it implies a filtered/prioritized list suitable for UI
+            val loaded = correlationDatabaseHelper.getTopCorrelations()
+            _correlations.value = loaded
+            Log.d("StatisticsViewModel", "Loaded ${loaded.size} correlations.")
+        }
+    }
+
+    // NEW: Function to trigger correlation calculation
+    fun calculateCorrelations() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isCalculatingCorrelations.value = true
+            Log.d("StatisticsViewModel", "Starting correlation calculation...")
+            // Fetch all available health data, as correlation might need a longer history
+            val historicalData = healthDatabaseHelper.fetchAllData()
+
+            // It's crucial that HealthData also resides in the root package
+            // or is correctly imported if it's in another package.
+            // Assuming HealthData is also in com.example.mattshealthtracker based on your earlier code.
+
+            if (historicalData.size < 15) { // Minimum data points for meaningful correlation (adjust as needed)
+                Log.d("StatisticsViewModel", "Not enough data for correlation calculation (min 15 days needed). Found: ${historicalData.size}")
+                _isCalculatingCorrelations.value = false
+                _correlations.value = emptyList() // Clear correlations if not enough data
+                return@launch // Exit coroutine
+            }
+
+            try {
+                // This call will now directly use CorrelationDatabaseHelper from the root package
+                val newlyDetected = correlationDatabaseHelper.calculateAndStoreAllCorrelations(historicalData)
+                Log.d("StatisticsViewModel", "Calculated and stored ${newlyDetected.size} new/updated correlations.")
+                loadCorrelations() // Reload all correlations after calculation to update UI
+            } catch (e: Exception) {
+                Log.e("StatisticsViewModel", "Error during correlation calculation: ${e.message}", e)
+            } finally {
+                _isCalculatingCorrelations.value = false
+            }
+        }
+    }
+
+    // NEW: Function to update a correlation's preference score
+    fun updateCorrelationPreference(correlationId: Long, delta: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            correlationDatabaseHelper.updatePreference(correlationId, delta)
+            loadCorrelations() // Refresh list after update to show new scores
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        healthDatabaseHelper.close()
+        correlationDatabaseHelper.close() // NEW: Close correlation database helper
+    }
 }
 
-// --- NEW DATA CLASS FOR METRIC INFO ---
+// Data class for MetricInfo
 data class MetricInfo(
     val name: String,
     val extractor: (HealthData) -> Float,
