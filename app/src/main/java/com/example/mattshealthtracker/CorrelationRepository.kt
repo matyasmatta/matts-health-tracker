@@ -3,12 +3,11 @@ package com.example.mattshealthtracker
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
-import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 
 class CorrelationRepository(context: Context) {
 
-    private val dbHelper = CorrelationDatabaseHelper(context) // Changed to CorrelationDatabaseHelper
+    private val dbHelper = CorrelationDatabaseHelper(context)
 
     companion object {
         private const val TAG = "CorrelationRepo"
@@ -20,49 +19,14 @@ class CorrelationRepository(context: Context) {
     // --- Core Operations ---
 
     /**
-     * Inserts a new correlation or updates an existing one based on its unique key.
-     * This uses the `ON CONFLICT REPLACE` defined in the table creation SQL.
+     * Triggers the comprehensive correlation calculation and storage process
+     * managed by CorrelationDatabaseHelper.
+     * This is the primary way to get correlations into the database now.
+     * This method doesn't take a single Correlation object for insert/update,
+     * as the helper handles the full calculation and cherry-picking internally.
      */
-    fun insertOrUpdateCorrelation(correlation: Correlation) {
-        val db = dbHelper.writableDatabase // Get a writable database instance
-        val values = ContentValues().apply {
-            // Ensure symptomA and symptomB are stored in consistent alphabetical order
-            // to correctly match the UNIQUE constraint.
-            put(CorrelationDatabaseHelper.COLUMN_SYMPTOM_A, if (correlation.symptomA <= correlation.symptomB) correlation.symptomA else correlation.symptomB)
-            put(CorrelationDatabaseHelper.COLUMN_SYMPTOM_B, if (correlation.symptomA <= correlation.symptomB) correlation.symptomB else correlation.symptomA)
-            put(CorrelationDatabaseHelper.COLUMN_LAG, correlation.lag)
-            put(CorrelationDatabaseHelper.COLUMN_IS_POSITIVE_CORRELATION, if (correlation.isPositiveCorrelation) 1 else 0)
-            put(CorrelationDatabaseHelper.COLUMN_CONFIDENCE, correlation.confidence)
-            put(CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE, correlation.insightfulnessScore)
-            // When updating an existing correlation, we want to retain its current preferenceScore.
-            // When inserting a new one, it starts at 0 (from the Correlation data class default).
-            // We fetch the existing preference score first to preserve it.
-            val existingPreference = getPreferenceScoreForCorrelation(correlation)
-            put(CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE, existingPreference ?: correlation.preferenceScore)
-            put(CorrelationDatabaseHelper.COLUMN_LAST_CALCULATED_DATE, System.currentTimeMillis())
-        }
-
-        db.beginTransaction()
-        try {
-            // Using insertWithOnConflict with CONFLICT_REPLACE is a straightforward way to upsert
-            val result = db.insertWithOnConflict(
-                CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                null,
-                values,
-                SQLiteDatabase.CONFLICT_REPLACE
-            )
-            if (result == -1L) {
-                Log.e(TAG, "Failed to insert or update correlation: ${correlation.getUniqueKey()}")
-            } else {
-                Log.d(TAG, "Successfully inserted or updated correlation: ${correlation.getUniqueKey()} (ID: $result)")
-            }
-            db.setTransactionSuccessful()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during insertOrUpdateCorrelation: ${e.message}", e)
-        } finally {
-            db.endTransaction()
-            db.close() // Close the database after each operation
-        }
+    fun calculateAndStoreAllCorrelations(allHealthData: List<HealthData>): List<Correlation> {
+        return dbHelper.calculateAndStoreAllCorrelations(allHealthData)
     }
 
     /**
@@ -71,22 +35,26 @@ class CorrelationRepository(context: Context) {
     fun updatePreference(correlationId: Long, delta: Int) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
-            // Directly use SQL to increment/decrement the existing value
-            put(CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE, "(${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} + $delta)")
+            // Fix: Directly use SQL to increment/decrement the existing value
+            // This is safer than reading it into Kotlin, incrementing, and writing back,
+            // as it avoids race conditions if multiple updates happen concurrently.
+            // However, ContentValue.put() does not directly accept SQL expressions.
+            // We need to use execSQL for this specific kind of update.
         }
 
-        val rowsAffected = db.update(
-            CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-            values,
-            "${CorrelationDatabaseHelper.COLUMN_ID} = ?",
-            arrayOf(correlationId.toString())
-        )
-        if (rowsAffected > 0) {
+        // Using execSQL for direct SQL update for preference
+        val sql = "UPDATE ${CorrelationDatabaseHelper.TABLE_CORRELATIONS} " +
+                "SET ${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} = ${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} + ? " +
+                "WHERE ${CorrelationDatabaseHelper.COLUMN_ID} = ?"
+
+        try {
+            db.execSQL(sql, arrayOf(delta.toString(), correlationId.toString()))
             Log.d(TAG, "Updated preference for correlation ID $correlationId by $delta")
-        } else {
-            Log.w(TAG, "No correlation found with ID $correlationId to update preference.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating preference for ID $correlationId: ${e.message}", e)
+        } finally {
+            db.close()
         }
-        db.close()
     }
 
     // --- Query Operations ---
@@ -99,9 +67,10 @@ class CorrelationRepository(context: Context) {
         val db = dbHelper.readableDatabase
         val correlations = mutableListOf<Correlation>()
 
-        // Order by Insightfulness (desc), then Confidence (desc), then Preference (desc)
-        val orderBy = "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_CONFIDENCE} DESC, " +
+        // Order by Insightfulness (desc), then Confidence (abs desc), then Preference (desc)
+        // Use ABS(confidence) for sorting strength regardless of positive/negative direction
+        val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
+                "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
 
         val selection = "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} >= ?"
@@ -138,9 +107,9 @@ class CorrelationRepository(context: Context) {
         val db = dbHelper.readableDatabase
         val correlations = mutableListOf<Correlation>()
 
-        // Order by Insightfulness (desc), then Confidence (desc), then Preference (desc)
-        val orderBy = "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_CONFIDENCE} DESC, " +
+        // Order by Insightfulness (desc), then Confidence (abs desc), then Preference (desc)
+        val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
+                "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
 
         var cursor: Cursor? = null
@@ -168,61 +137,22 @@ class CorrelationRepository(context: Context) {
     // --- Helper Methods ---
 
     /**
-     * Reads the preference score for an existing correlation to preserve it during UPSERT.
-     * This query uses the unique fields to find the existing entry.
-     */
-    private fun getPreferenceScoreForCorrelation(correlation: Correlation): Int? {
-        val db = dbHelper.readableDatabase
-        var preference: Int? = null
-
-        val (s1, s2) = if (correlation.symptomA <= correlation.symptomB) {
-            correlation.symptomA to correlation.symptomB
-        } else {
-            correlation.symptomB to correlation.symptomA
-        }
-
-        val selection = "${CorrelationDatabaseHelper.COLUMN_SYMPTOM_A} = ? AND " +
-                "${CorrelationDatabaseHelper.COLUMN_SYMPTOM_B} = ? AND " +
-                "${CorrelationDatabaseHelper.COLUMN_LAG} = ? AND " +
-                "${CorrelationDatabaseHelper.COLUMN_IS_POSITIVE_CORRELATION} = ?"
-        val selectionArgs = arrayOf(
-            s1,
-            s2,
-            correlation.lag.toString(),
-            if (correlation.isPositiveCorrelation) "1" else "0"
-        )
-
-        var cursor: Cursor? = null
-        try {
-            cursor = db.query(
-                CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                arrayOf(CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE), // Only get preference
-                selection,
-                selectionArgs,
-                null, null, null, null
-            )
-            if (cursor.moveToFirst()) {
-                val preferenceIndex = cursor.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE)
-                preference = cursor.getInt(preferenceIndex)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting existing preference score: ${e.message}", e)
-        } finally {
-            cursor?.close()
-        }
-        return preference
-    }
-
-    /**
      * Helper function to convert a Cursor to a list of Correlation objects.
+     * This is updated to read the new granular columns.
      */
     private fun cursorToCorrelations(cursor: Cursor?): List<Correlation> {
         val correlations = mutableListOf<Correlation>()
         cursor?.use {
             if (it.moveToFirst()) {
                 val idIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_ID)
-                val symptomAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_SYMPTOM_A)
-                val symptomBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_SYMPTOM_B)
+                // Get indices for the new granular columns
+                val baseSymptomAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_BASE_SYMPTOM_A)
+                val windowSizeAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_WINDOW_SIZE_A)
+                val calcTypeAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CALC_TYPE_A)
+                val baseSymptomBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_BASE_SYMPTOM_B)
+                val windowSizeBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_WINDOW_SIZE_B)
+                val calcTypeBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CALC_TYPE_B)
+
                 val lagIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_LAG)
                 val isPositiveIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_IS_POSITIVE_CORRELATION)
                 val confidenceIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CONFIDENCE)
@@ -234,10 +164,15 @@ class CorrelationRepository(context: Context) {
                     correlations.add(
                         Correlation(
                             id = it.getLong(idIndex),
-                            symptomA = it.getString(symptomAIndex),
-                            symptomB = it.getString(symptomBIndex),
+                            // Map to new granular fields
+                            baseSymptomA = it.getString(baseSymptomAIndex),
+                            windowSizeA = it.getInt(windowSizeAIndex),
+                            calcTypeA = it.getString(calcTypeAIndex),
+                            baseSymptomB = it.getString(baseSymptomBIndex),
+                            windowSizeB = it.getInt(windowSizeBIndex),
+                            calcTypeB = it.getString(calcTypeBIndex),
                             lag = it.getInt(lagIndex),
-                            isPositiveCorrelation = it.getInt(isPositiveIndex) == 1,
+                            isPositiveCorrelation = it.getInt(isPositiveIndex) == 1, // Store as Int, retrieve as Boolean
                             confidence = it.getFloat(confidenceIndex),
                             insightfulnessScore = it.getDouble(insightfulnessIndex),
                             preferenceScore = it.getInt(preferenceIndex),

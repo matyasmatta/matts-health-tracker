@@ -71,9 +71,11 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * Applies a Savitzky-Golay filter to smooth a list of data points.
@@ -843,45 +845,98 @@ fun CorrelationSection(
 }
 
 @Composable
-fun CorrelationItem(correlation: Correlation, onUpdatePreference: (Long, Int) -> Unit) {
+fun CorrelationItem(
+    correlation: Correlation,
+    onUpdatePreference: (Long, Int) -> Unit
+) {
+    // Define the range for the Preference Bar for visual representation
+    val MAX_PREFERENCE_BAR_VALUE = 5
+    val MIN_PREFERENCE_BAR_VALUE = -5
+    val PREFERENCE_BAR_RANGE = (MAX_PREFERENCE_BAR_VALUE - MIN_PREFERENCE_BAR_VALUE).toFloat()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 8.dp, horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
+            // Main correlation description: "Symptom A increases/decreases with Symptom B"
             Text(
-                text = "${correlation.symptomA} ${
+                text = "${correlation.getDisplayNameA()} ${
                     when {
                         correlation.confidence > 0 -> "increases with"
                         correlation.confidence < 0 -> "decreases with"
                         else -> "is unrelated to"
                     }
-                } ${correlation.symptomB}",
+                } ${correlation.getDisplayNameB()}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )
-            Text(
-                // MODIFIED LINE STARTS HERE
-                text = "Strength: ${String.format("%.2f", correlation.confidence)} | Preference: ${correlation.preferenceScore}" +
-                        if (correlation.lag > 0) " | Lag: ${correlation.lag} day${if (correlation.lag > 1) "s" else ""}" else "",
-                // MODIFIED LINE ENDS HERE
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
+            Spacer(modifier = Modifier.height(4.dp)) // Space between main text and bars
+
+            // --- Strength Bar ---
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Strength:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                LinearProgressIndicator(
+                    progress = abs(correlation.confidence),
+                    modifier = Modifier.weight(1f),
+                    color = if (correlation.confidence > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                )
+                Text(" ${String.format("%.2f", correlation.confidence)}", style = MaterialTheme.typography.labelSmall)
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+
+            // --- Preference Bar ---
+            val normalizedPreference = (correlation.preferenceScore.toFloat() - MIN_PREFERENCE_BAR_VALUE) / PREFERENCE_BAR_RANGE
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Preference:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                LinearProgressIndicator(
+                    progress = normalizedPreference.coerceIn(0f, 1f),
+                    modifier = Modifier.weight(1f),
+                    color = when {
+                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.tertiary
+                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    }
+                )
+                Text(" ${correlation.preferenceScore}", style = MaterialTheme.typography.labelSmall)
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+
+            // --- Delay and Average Information (on one line, only if applicable) ---
+            val delayText = if (correlation.lag > 0) "Delay: ${correlation.lag} day${if (correlation.lag != 1) "s" else ""}" else ""
+            val averageText = correlation.getAverageInfo() // This now returns empty if no averaging
+
+            val combinedInfo = when {
+                delayText.isNotEmpty() && averageText.isNotEmpty() -> "$delayText | $averageText"
+                delayText.isNotEmpty() -> delayText
+                averageText.isNotEmpty() -> averageText
+                else -> "" // No delay or averaging information to display
+            }
+
+            if (combinedInfo.isNotEmpty()) {
+                Text(
+                    text = combinedInfo,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+
+        // --- Preference Buttons ---
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(
                 onClick = { onUpdatePreference(correlation.id, 1) },
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Increase preference")
             }
             IconButton(
                 onClick = { onUpdatePreference(correlation.id, -1) },
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(40.dp)
             ) {
                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Decrease preference")
             }
