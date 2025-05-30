@@ -8,8 +8,8 @@ data class Correlation(
     val symptomB: String,
     val lag: Int, // 0 for contemporaneous, positive for lagged (A -> B after `lag` days)
     val isPositiveCorrelation: Boolean, // True if both increase/decrease together, False if one increases and other decreases
-    val confidence: Double, // e.g., R^2 value (0.0 to 1.0)
-    val insightfulnessScore: Double, // Your calculated score (e.g., 0.0 to 5.0)
+    val confidence: Float, // Pearson R value (-1.0 to 1.0), representing strength and direction.
+    val insightfulnessScore: Double, // Your calculated score. If directly from Pearson R, will be -1.0 to 1.0. (Review this if you intend a 0.0 to 5.0 scale)
     var preferenceScore: Int, // User's preference, starts at 0. Can be negative.
     val lastCalculatedDate: Long // Unix timestamp (milliseconds) of when this correlation was last detected/updated
 ) {

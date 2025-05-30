@@ -853,21 +853,21 @@ fun CorrelationItem(correlation: Correlation, onUpdatePreference: (Long, Int) ->
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                // FIXED: Changed metricA to symptomA and metricB to symptomB
                 text = "${correlation.symptomA} ${
                     when {
-                        // FIXED: Changed correlationValue to confidence
                         correlation.confidence > 0 -> "increases with"
                         correlation.confidence < 0 -> "decreases with"
-                        else -> "is unrelated to" // Should not happen with meaningful correlations
+                        else -> "is unrelated to"
                     }
-                } ${correlation.symptomB}", // FIXED: Changed metricB to symptomB
+                } ${correlation.symptomB}",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium
             )
             Text(
-                // FIXED: Changed correlationValue to confidence
-                text = "Strength: ${String.format("%.2f", correlation.confidence)} | Preference: ${correlation.preferenceScore}",
+                // MODIFIED LINE STARTS HERE
+                text = "Strength: ${String.format("%.2f", correlation.confidence)} | Preference: ${correlation.preferenceScore}" +
+                        if (correlation.lag > 0) " | Lag: ${correlation.lag} day${if (correlation.lag > 1) "s" else ""}" else "",
+                // MODIFIED LINE ENDS HERE
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

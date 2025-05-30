@@ -1,29 +1,22 @@
-// In a file named 'CorrelationDatabaseHelper.kt'
-package com.example.mattshealthtracker // Updated package name
+package com.example.mattshealthtracker
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import org.apache.commons.math3.stat.correlation.PearsonsCorrelation
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
+import kotlin.math.abs // Ensure this import is present if abs is used elsewhere, though it's now primarily Math.abs
 
-class CorrelationDatabaseHelper(context: Context) :
-    SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
-    // --- Database Constants and Schema ---
     companion object {
-        private const val TAG = "CorrelationDBHelper"
-
+        // Change 'private const val' to 'const val' for public access
         const val DATABASE_NAME = "correlations.db"
-        const val DATABASE_VERSION = 1
-
-        // Table and Column Names
+        const val DATABASE_VERSION = 3
         const val TABLE_CORRELATIONS = "correlations"
-        const val COLUMN_ID = "id"
+        const val COLUMN_ID = "_id"
         const val COLUMN_SYMPTOM_A = "symptom_a"
         const val COLUMN_SYMPTOM_B = "symptom_b"
         const val COLUMN_LAG = "lag"
@@ -33,422 +26,238 @@ class CorrelationDatabaseHelper(context: Context) :
         const val COLUMN_PREFERENCE_SCORE = "preference_score"
         const val COLUMN_LAST_CALCULATED_DATE = "last_calculated_date"
 
-        // SQL statement to create the table
-        private const val SQL_CREATE_ENTRIES =
-            "CREATE TABLE $TABLE_CORRELATIONS (" +
-                    "$COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT," +
-                    "$COLUMN_SYMPTOM_A TEXT NOT NULL," +
-                    "$COLUMN_SYMPTOM_B TEXT NOT NULL," +
-                    "$COLUMN_LAG INTEGER NOT NULL," +
-                    "$COLUMN_IS_POSITIVE_CORRELATION INTEGER NOT NULL," +
-                    "$COLUMN_CONFIDENCE REAL NOT NULL," +
-                    "$COLUMN_INSIGHTFULNESS_SCORE REAL NOT NULL," +
-                    "$COLUMN_PREFERENCE_SCORE INTEGER NOT NULL," +
-                    "$COLUMN_LAST_CALCULATED_DATE INTEGER NOT NULL," +
-                    "UNIQUE($COLUMN_SYMPTOM_A, $COLUMN_SYMPTOM_B, $COLUMN_LAG, $COLUMN_IS_POSITIVE_CORRELATION) ON CONFLICT REPLACE" +
-                    ");"
-
-        private const val SQL_DELETE_ENTRIES = "DROP TABLE IF EXISTS $TABLE_CORRELATIONS"
-
-        const val SUPPRESSION_THRESHOLD = -5
+        // These can remain private if they are only used internally within this file
+        private const val CORRELATION_THRESHOLD = 0.2
+        private const val MIN_DATA_POINTS_FOR_CORRELATION = 15
+        private const val MAX_LAG_DAYS = 3
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(SQL_CREATE_ENTRIES)
+        val CREATE_CORRELATIONS_TABLE = """
+            CREATE TABLE $TABLE_CORRELATIONS (
+                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COLUMN_SYMPTOM_A TEXT NOT NULL,
+                $COLUMN_SYMPTOM_B TEXT NOT NULL,
+                $COLUMN_LAG INTEGER NOT NULL,
+                $COLUMN_IS_POSITIVE_CORRELATION INTEGER NOT NULL,
+                $COLUMN_CONFIDENCE REAL NOT NULL,
+                $COLUMN_INSIGHTFULNESS_SCORE REAL NOT NULL,
+                $COLUMN_PREFERENCE_SCORE INTEGER NOT NULL DEFAULT 0,
+                $COLUMN_LAST_CALCULATED_DATE INTEGER NOT NULL,
+                UNIQUE($COLUMN_SYMPTOM_A, $COLUMN_SYMPTOM_B, $COLUMN_LAG) ON CONFLICT REPLACE
+            )
+        """.trimIndent()
+        db.execSQL(CREATE_CORRELATIONS_TABLE)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL(SQL_DELETE_ENTRIES)
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_CORRELATIONS")
         onCreate(db)
     }
 
-    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        onUpgrade(db, oldVersion, newVersion)
+    fun insertOrUpdateCorrelation(newCorrelation: Correlation): Long {
+        val db = writableDatabase
+        var existingCorrelationId: Long? = null
+        var existingPreferenceScore = 0
+
+        val cursor = db.query(
+            TABLE_CORRELATIONS,
+            arrayOf(COLUMN_ID, COLUMN_PREFERENCE_SCORE),
+            "$COLUMN_SYMPTOM_A = ? AND $COLUMN_SYMPTOM_B = ? AND $COLUMN_LAG = ?",
+            arrayOf(newCorrelation.symptomA, newCorrelation.symptomB, newCorrelation.lag.toString()),
+            null, null, null
+        )
+
+        cursor.use {
+            if (it.moveToFirst()) {
+                existingCorrelationId = it.getLong(it.getColumnIndexOrThrow(COLUMN_ID))
+                existingPreferenceScore = it.getInt(it.getColumnIndexOrThrow(COLUMN_PREFERENCE_SCORE))
+            }
+        }
+
+        val values = ContentValues().apply {
+            put(COLUMN_SYMPTOM_A, newCorrelation.symptomA)
+            put(COLUMN_SYMPTOM_B, newCorrelation.symptomB)
+            put(COLUMN_LAG, newCorrelation.lag)
+            put(COLUMN_IS_POSITIVE_CORRELATION, if (newCorrelation.isPositiveCorrelation) 1 else 0)
+            put(COLUMN_CONFIDENCE, newCorrelation.confidence) // This will now correctly store the signed value
+            put(COLUMN_INSIGHTFULNESS_SCORE, newCorrelation.insightfulnessScore)
+            put(COLUMN_LAST_CALCULATED_DATE, newCorrelation.lastCalculatedDate)
+
+            put(COLUMN_PREFERENCE_SCORE, existingPreferenceScore)
+        }
+
+        return if (existingCorrelationId != null) {
+            db.update(TABLE_CORRELATIONS, values, "$COLUMN_ID = ?", arrayOf(existingCorrelationId.toString()))
+            existingCorrelationId!!
+        } else {
+            db.insert(TABLE_CORRELATIONS, null, values)
+        }
     }
 
-    // --- Database Operations ---
 
-    fun insertOrUpdateCorrelation(correlation: Correlation) {
-        val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COLUMN_SYMPTOM_A, if (correlation.symptomA <= correlation.symptomB) correlation.symptomA else correlation.symptomB)
-            put(COLUMN_SYMPTOM_B, if (correlation.symptomA <= correlation.symptomB) correlation.symptomB else correlation.symptomA)
-            put(COLUMN_LAG, correlation.lag)
-            put(COLUMN_IS_POSITIVE_CORRELATION, if (correlation.isPositiveCorrelation) 1 else 0)
-            put(COLUMN_CONFIDENCE, correlation.confidence)
-            put(COLUMN_INSIGHTFULNESS_SCORE, correlation.insightfulnessScore)
-            val existingPreference = getPreferenceScoreForCorrelationInternal(db, correlation)
-            put(COLUMN_PREFERENCE_SCORE, existingPreference ?: correlation.preferenceScore)
-            put(COLUMN_LAST_CALCULATED_DATE, System.currentTimeMillis())
-        }
+    fun getTopCorrelations(limit: Int = -1): List<Correlation> {
+        val correlations = mutableListOf<Correlation>()
+        val db = readableDatabase
+        val cursor = db.query(
+            TABLE_CORRELATIONS,
+            null,
+            null,
+            null,
+            null,
+            null,
+            // MODIFIED SORT ORDER STARTS HERE
+            "ABS($COLUMN_CONFIDENCE) DESC, $COLUMN_INSIGHTFULNESS_SCORE DESC, $COLUMN_PREFERENCE_SCORE DESC",
+            // MODIFIED SORT ORDER ENDS HERE
+            limit.toString()
+        )
 
-        db.beginTransaction()
-        try {
-            val result = db.insertWithOnConflict(
-                TABLE_CORRELATIONS,
-                null,
-                values,
-                SQLiteDatabase.CONFLICT_REPLACE
-            )
-            if (result == -1L) {
-                Log.e(TAG, "Failed to insert or update correlation: ${correlation.getUniqueKey()}")
-            } else {
-                Log.d(TAG, "Successfully inserted or updated correlation: ${correlation.getUniqueKey()} (ID: $result)")
+        cursor.use {
+            while (it.moveToNext()) {
+                val id = it.getLong(it.getColumnIndexOrThrow(COLUMN_ID))
+                val symptomA = it.getString(it.getColumnIndexOrThrow(COLUMN_SYMPTOM_A))
+                val symptomB = it.getString(it.getColumnIndexOrThrow(COLUMN_SYMPTOM_B))
+                val lag = it.getInt(it.getColumnIndexOrThrow(COLUMN_LAG))
+                val isPositiveCorrelation = it.getInt(it.getColumnIndexOrThrow(COLUMN_IS_POSITIVE_CORRELATION)) == 1
+                val confidence = it.getDouble(it.getColumnIndexOrThrow(COLUMN_CONFIDENCE)).toFloat()
+                val insightfulnessScore = it.getDouble(it.getColumnIndexOrThrow(COLUMN_INSIGHTFULNESS_SCORE))
+                val preferenceScore = it.getInt(it.getColumnIndexOrThrow(COLUMN_PREFERENCE_SCORE))
+                val lastCalculatedDate = it.getLong(it.getColumnIndexOrThrow(COLUMN_LAST_CALCULATED_DATE))
+
+                correlations.add(
+                    Correlation(
+                        id, symptomA, symptomB, lag, isPositiveCorrelation,
+                        confidence, insightfulnessScore, preferenceScore, lastCalculatedDate
+                    )
+                )
             }
-            db.setTransactionSuccessful()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during insertOrUpdateCorrelation: ${e.message}", e)
-        } finally {
-            db.endTransaction()
-            db.close()
         }
+        return correlations
     }
 
     fun updatePreference(correlationId: Long, delta: Int) {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COLUMN_PREFERENCE_SCORE, "(${COLUMN_PREFERENCE_SCORE} + $delta)")
-        }
-
-        val rowsAffected = db.update(
-            TABLE_CORRELATIONS,
-            values,
-            "$COLUMN_ID = ?",
-            arrayOf(correlationId.toString())
-        )
-        if (rowsAffected > 0) {
-            Log.d(TAG, "Updated preference for correlation ID $correlationId by $delta")
-        } else {
-            Log.w(TAG, "No correlation found with ID $correlationId to update preference.")
-        }
-        db.close()
+        db.execSQL("UPDATE $TABLE_CORRELATIONS SET $COLUMN_PREFERENCE_SCORE = $COLUMN_PREFERENCE_SCORE + ? WHERE $COLUMN_ID = ?", arrayOf(delta.toString(), correlationId.toString()))
+        Log.d("CorrelationDB", "Updated preference for ID $correlationId by $delta")
     }
 
-    fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
-        val db = readableDatabase
-        val correlations = mutableListOf<Correlation>()
-        val orderBy = "$COLUMN_INSIGHTFULNESS_SCORE DESC, " +
-                "$COLUMN_CONFIDENCE DESC, " +
-                "$COLUMN_PREFERENCE_SCORE DESC"
-        val selection = "$COLUMN_PREFERENCE_SCORE >= ?"
-        val selectionArgs = arrayOf(minPreferenceThreshold.toString())
 
-        var cursor: Cursor? = null
-        try {
-            cursor = db.query(
-                TABLE_CORRELATIONS, null, selection, selectionArgs, null, null, orderBy, limit.toString()
-            )
-            correlations.addAll(cursorToCorrelations(cursor))
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting top correlations: ${e.message}", e)
-        } finally {
-            cursor?.close()
-            db.close()
+    private fun getMetricValues(
+        healthDataList: List<HealthData>,
+        metricName: String
+    ): List<Float>? {
+        return when (metricName) {
+            "Malaise" -> healthDataList.map { it.malaise }
+            "Stress Level" -> healthDataList.map { it.stressLevel }
+            "Sleep Quality" -> healthDataList.map { it.sleepQuality }
+            "Illness Impact" -> healthDataList.map { it.illnessImpact }
+            "Depression" -> healthDataList.map { it.depression }
+            "Hopelessness" -> healthDataList.map { it.hopelessness }
+            "Sore Throat" -> healthDataList.map { it.soreThroat }
+            "Sleep Length" -> healthDataList.map { it.sleepLength }
+            "Lymphadenopathy" -> healthDataList.map { it.lymphadenopathy }
+            "Exercise Level" -> healthDataList.map { it.exerciseLevel }
+            "Sleep Readiness" -> healthDataList.map { it.sleepReadiness }
+            else -> null
         }
-        return correlations
     }
 
-    fun getAllCorrelations(): List<Correlation> {
-        val db = readableDatabase
-        val correlations = mutableListOf<Correlation>()
-        val orderBy = "$COLUMN_INSIGHTFULNESS_SCORE DESC, " +
-                "$COLUMN_CONFIDENCE DESC, " +
-                "$COLUMN_PREFERENCE_SCORE DESC"
 
-        var cursor: Cursor? = null
-        try {
-            cursor = db.query(
-                TABLE_CORRELATIONS, null, null, null, null, null, orderBy, null
-            )
-            correlations.addAll(cursorToCorrelations(cursor))
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting all correlations: ${e.message}", e)
-        } finally {
-            cursor?.close()
-            db.close()
-        }
-        return correlations
-    }
+    fun calculateAndStoreAllCorrelations(allHealthData: List<HealthData>): List<Correlation> {
+        val calculatedCorrelations = mutableListOf<Correlation>()
 
-    private fun getPreferenceScoreForCorrelationInternal(db: SQLiteDatabase, correlation: Correlation): Int? {
-        var preference: Int? = null
-        val (s1, s2) = if (correlation.symptomA <= correlation.symptomB) {
-            correlation.symptomA to correlation.symptomB
-        } else {
-            correlation.symptomB to correlation.symptomA
+        if (allHealthData.size < MIN_DATA_POINTS_FOR_CORRELATION) {
+            Log.d("CorrelationCalc", "Not enough data points for correlation calculation (${allHealthData.size} found, $MIN_DATA_POINTS_FOR_CORRELATION needed). Returning empty list.")
+            return emptyList()
         }
 
-        val selection = "$COLUMN_SYMPTOM_A = ? AND " +
-                "$COLUMN_SYMPTOM_B = ? AND " +
-                "$COLUMN_LAG = ? AND " +
-                "$COLUMN_IS_POSITIVE_CORRELATION = ?"
-        val selectionArgs = arrayOf(
-            s1, s2, correlation.lag.toString(), if (correlation.isPositiveCorrelation) "1" else "0"
+        // Sort data by date for consistent time series
+        val sortedData = allHealthData.sortedBy { it.currentDate }
+        val dateMap = sortedData.associateBy { LocalDate.parse(it.currentDate) }
+
+        val allMetricNames = listOf(
+            "Malaise", "Stress Level", "Sleep Quality", "Illness Impact", "Depression",
+            "Hopelessness", "Sore Throat", "Sleep Length", "Lymphadenopathy", "Exercise Level", "Sleep Readiness"
         )
 
-        var cursor: Cursor? = null
-        try {
-            cursor = db.query(
-                TABLE_CORRELATIONS, arrayOf(COLUMN_PREFERENCE_SCORE), selection, selectionArgs, null, null, null, null
-            )
-            if (cursor.moveToFirst()) {
-                val preferenceIndex = cursor.getColumnIndexOrThrow(COLUMN_PREFERENCE_SCORE)
-                preference = cursor.getInt(preferenceIndex)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting existing preference score: ${e.message}", e)
-        } finally {
-            cursor?.close()
-        }
-        return preference
-    }
+        Log.d("CorrelationCalc", "Starting correlation calculation for ${allMetricNames.size} metrics and ${MAX_LAG_DAYS + 1} lags.")
 
-    private fun cursorToCorrelations(cursor: Cursor?): List<Correlation> {
-        val correlations = mutableListOf<Correlation>()
-        cursor?.use {
-            if (it.moveToFirst()) {
-                val idIndex = it.getColumnIndexOrThrow(COLUMN_ID)
-                val symptomAIndex = it.getColumnIndexOrThrow(COLUMN_SYMPTOM_A)
-                val symptomBIndex = it.getColumnIndexOrThrow(COLUMN_SYMPTOM_B)
-                val lagIndex = it.getColumnIndexOrThrow(COLUMN_LAG)
-                val isPositiveIndex = it.getColumnIndexOrThrow(COLUMN_IS_POSITIVE_CORRELATION)
-                val confidenceIndex = it.getColumnIndexOrThrow(COLUMN_CONFIDENCE)
-                val insightfulnessIndex = it.getColumnIndexOrThrow(COLUMN_INSIGHTFULNESS_SCORE)
-                val preferenceIndex = it.getColumnIndexOrThrow(COLUMN_PREFERENCE_SCORE)
-                val lastCalculatedIndex = it.getColumnIndexOrThrow(COLUMN_LAST_CALCULATED_DATE)
+        // Iterate through all unique pairs of metrics
+        for (i in allMetricNames.indices) {
+            for (j in i + 1 until allMetricNames.size) { // j starts from i+1 to avoid duplicates (A,B) and (B,A)
+                val metricA = allMetricNames[i]
+                val metricB = allMetricNames[j]
 
-                do {
-                    correlations.add(
-                        Correlation(
-                            id = it.getLong(idIndex),
-                            symptomA = it.getString(symptomAIndex),
-                            symptomB = it.getString(symptomBIndex),
-                            lag = it.getInt(lagIndex),
-                            isPositiveCorrelation = it.getInt(isPositiveIndex) == 1,
-                            confidence = it.getDouble(confidenceIndex),
-                            insightfulnessScore = it.getDouble(insightfulnessIndex),
-                            preferenceScore = it.getInt(preferenceIndex),
-                            lastCalculatedDate = it.getLong(lastCalculatedIndex)
-                        )
-                    )
-                } while (it.moveToNext())
-            }
-        }
-        return correlations
-    }
+                for (lag in 0..MAX_LAG_DAYS) { // Loop through all specified lags
+                    // Collect aligned data points for current metric pair and lag
+                    val valuesA = mutableListOf<Double>()
+                    val valuesB = mutableListOf<Double>()
 
-    // --- Correlation Calculation Logic ---
+                    // Iterate through each HealthData entry as the reference for metricA's date
+                    for (data in sortedData) {
+                        val dateA = LocalDate.parse(data.currentDate)
+                        // Calculate the date for metricB based on the current lag
+                        val dateBForLag = dateA.plusDays(lag.toLong())
 
-    // Define your symptom groups for insightfulness calculation based on HealthData metrics
-    // Using string keys that match the HealthData property names
-    private val symptomGroups = mapOf(
-        "malaise" to "Symptom",
-        "soreThroat" to "Symptom",
-        "lymphadenopathy" to "Symptom",
-        "illnessImpact" to "Symptom",
-        "depression" to "Mood",
-        "hopelessness" to "Mood",
-        "stressLevel" to "Mood",
-        "exerciseLevel" to "Activity",
-        "sleepQuality" to "Sleep",
-        "sleepLength" to "Sleep",
-        "sleepReadiness" to "Sleep"
-    )
+                        // Get HealthData entries for both dates
+                        val healthDataA = dateMap[dateA]
+                        val healthDataB = dateMap[dateBForLag]
 
-    // Define "self-evident" pairs that get an insightfulness penalty
-    // Using string keys that match the HealthData property names
-    private val selfEvidentPairs = setOf(
-        "malaise-illnessImpact",
-        "malaise-soreThroat",
-        "sleepQuality-sleepLength",
-        "depression-hopelessness"
-    )
+                        // If both data points exist, extract their values
+                        if (healthDataA != null && healthDataB != null) {
+                            val valA = getMetricValues(listOf(healthDataA), metricA)?.firstOrNull()
+                            val valB = getMetricValues(listOf(healthDataB), metricB)?.firstOrNull()
 
-    /**
-     * Main function to calculate all correlations from historical HealthData.
-     * This method fetches raw data, performs calculations, and then saves them to the database.
-     * @param historicalData A list of your `HealthData` objects for the desired look-back period.
-     * @return A list of newly detected/updated `Correlation` objects.
-     */
-    fun calculateAndStoreAllCorrelations(historicalData: List<HealthData>): List<Correlation> {
-        val newlyDetectedCorrelations = mutableListOf<Correlation>()
-
-        if (historicalData.size < 15) {
-            Log.d(TAG, "Not enough historical data (${historicalData.size} days) for correlation calculation. Need at least 15.")
-            return newlyDetectedCorrelations
-        }
-
-        val metricsData = prepareMetricTimeSeries(historicalData)
-        val metricNames = metricsData.keys.toList()
-
-        val maxLag = 14
-
-        for (i in metricNames.indices) {
-            for (j in i + 1 until metricNames.size) {
-                val metricA = metricNames[i]
-                val metricB = metricNames[j]
-
-                val seriesA = metricsData[metricA] ?: continue
-                val seriesB = metricsData[metricB] ?: continue
-
-                for (lag in 0..maxLag) {
-                    val (laggedSeriesA, laggedSeriesB) = createLaggedSeries(seriesA, seriesB, lag)
-
-                    if (laggedSeriesA.size < 10) {
-                        Log.d(TAG, "Skipping $metricA vs $metricB (lag $lag): Not enough aligned data points (${laggedSeriesA.size})")
-                        continue
+                            if (valA != null && valB != null) {
+                                valuesA.add(valA.toDouble())
+                                valuesB.add(valB.toDouble())
+                            }
+                        }
                     }
 
-                    val pearsonR = calculatePearsonCorrelation(laggedSeriesA, laggedSeriesB)
+                    Log.d("CorrelationCalc", "Analyzing: $metricA vs $metricB (Lag: $lag days). Data points found: ${valuesA.size}")
 
-                    if (pearsonR.isNaN()) {
-                        Log.d(TAG, "Skipping $metricA vs $metricB (lag $lag): Pearson correlation resulted in NaN.")
-                        continue
-                    }
+                    if (valuesA.size >= MIN_DATA_POINTS_FOR_CORRELATION) {
+                        try {
+                            // Calculate Pearson correlation
+                            val pearsonCorrelation = PearsonsCorrelation().correlation(valuesA.toDoubleArray(), valuesB.toDoubleArray())
 
-                    val minSignificantR = 0.5
-                    if (kotlin.math.abs(pearsonR) >= minSignificantR) {
-                        val confidence = pearsonR * pearsonR
-                        val isPositiveCorrelation = pearsonR > 0
+                            Log.d("CorrelationCalc", "  Calculated Pearson R: %.4f".format(pearsonCorrelation))
 
-                        val insightfulness = calculateInsightfulness(metricA, metricB, lag, isPositiveCorrelation)
+                            // Check if correlation is valid and meets the threshold
+                            if (!pearsonCorrelation.isNaN() && abs(pearsonCorrelation) >= CORRELATION_THRESHOLD) {
+                                val isPositive = pearsonCorrelation > 0
+                                val confidenceValueForStorage = pearsonCorrelation.toFloat()
+                                val insightfulness = pearsonCorrelation.toDouble() // Assuming insightfulness also uses the signed value directly
 
-                        val newCorrelation = Correlation(
-                            symptomA = metricA,
-                            symptomB = metricB,
-                            lag = lag,
-                            isPositiveCorrelation = isPositiveCorrelation,
-                            confidence = confidence,
-                            insightfulnessScore = insightfulness,
-                            preferenceScore = 0,
-                            lastCalculatedDate = System.currentTimeMillis()
-                        )
-                        newlyDetectedCorrelations.add(newCorrelation)
-                        insertOrUpdateCorrelation(newCorrelation)
+                                Log.d("CorrelationCalc", "  -> Storing significant correlation: $metricA ${if(isPositive) "INCREASES with" else "DECREASES with"} $metricB (Lag: $lag, Conf: %.2f)".format(Math.abs(pearsonCorrelation)))
+
+                                val correlation = Correlation(
+                                    symptomA = metricA,
+                                    symptomB = metricB,
+                                    lag = lag,
+                                    isPositiveCorrelation = isPositive,
+                                    confidence = confidenceValueForStorage,
+                                    insightfulnessScore = insightfulness,
+                                    preferenceScore = 0,
+                                    lastCalculatedDate = System.currentTimeMillis()
+                                )
+
+                                insertOrUpdateCorrelation(correlation)
+                                calculatedCorrelations.add(correlation)
+                            } else {
+                                Log.d("CorrelationCalc", "  Correlation for $metricA vs $metricB (Lag: $lag) is not significant (R=%.4f)".format(pearsonCorrelation))
+                            }
+                        } catch (e: Exception) {
+                            Log.e("CorrelationCalc", "Error calculating correlation for $metricA - $metricB (lag $lag): ${e.message}")
+                        }
+                    } else {
+                        Log.d("CorrelationCalc", "  Not enough data points for reliable calculation for $metricA - $metricB (Lag: $lag). Skipped.")
                     }
                 }
             }
         }
-        return newlyDetectedCorrelations
-    }
-
-    /**
-     * Extracts and aligns metric values from `HealthData` list into time series.
-     * Handles chronological ordering and basic placeholder for missing data.
-     *
-     * @param historicalData A list of `HealthData` objects, potentially from `HealthDatabaseHelper.fetchDataInDateRange()`.
-     * @return A map where keys are metric names (e.g., "malaise") and values are lists of their daily values (Double).
-     */
-    private fun prepareMetricTimeSeries(historicalData: List<HealthData>): Map<String, List<Double>> {
-        val metricTimeSeries = mutableMapOf<String, MutableList<Double>>()
-
-        val allMetricNames = symptomGroups.keys
-        allMetricNames.forEach { metricTimeSeries[it] = mutableListOf() }
-
-        val sortedData = historicalData.sortedBy { LocalDate.parse(it.currentDate, DateTimeFormatter.ISO_LOCAL_DATE) }
-
-        if (sortedData.isEmpty()) {
-            return emptyMap()
-        }
-
-        val startDate = LocalDate.parse(sortedData.first().currentDate, DateTimeFormatter.ISO_LOCAL_DATE)
-        val endDate = LocalDate.parse(sortedData.last().currentDate, DateTimeFormatter.ISO_LOCAL_DATE)
-        val totalDays = ChronoUnit.DAYS.between(startDate, endDate).toInt() + 1
-
-        val dataByDate = sortedData.associateBy { LocalDate.parse(it.currentDate, DateTimeFormatter.ISO_LOCAL_DATE) }
-
-        var currentDay = startDate
-        for (i in 0 until totalDays) {
-            val dailyLog = dataByDate[currentDay]
-            if (dailyLog != null) {
-                // Data exists for this day, add actual values
-                metricTimeSeries["malaise"]?.add(dailyLog.malaise.toDouble())
-                metricTimeSeries["soreThroat"]?.add(dailyLog.soreThroat.toDouble())
-                metricTimeSeries["lymphadenopathy"]?.add(dailyLog.lymphadenopathy.toDouble())
-                metricTimeSeries["exerciseLevel"]?.add(dailyLog.exerciseLevel.toDouble())
-                metricTimeSeries["stressLevel"]?.add(dailyLog.stressLevel.toDouble())
-                metricTimeSeries["illnessImpact"]?.add(dailyLog.illnessImpact.toDouble())
-                metricTimeSeries["depression"]?.add(dailyLog.depression.toDouble())
-                metricTimeSeries["hopelessness"]?.add(dailyLog.hopelessness.toDouble())
-                metricTimeSeries["sleepQuality"]?.add(dailyLog.sleepQuality.toDouble())
-                metricTimeSeries["sleepLength"]?.add(dailyLog.sleepLength.toDouble())
-                metricTimeSeries["sleepReadiness"]?.add(dailyLog.sleepReadiness.toDouble())
-            } else {
-                // Data missing for this day. Add NaN for all metrics.
-                allMetricNames.forEach { metricTimeSeries[it]?.add(Double.NaN) }
-            }
-            currentDay = currentDay.plusDays(1)
-        }
-
-        return metricTimeSeries.filterValues { it.isNotEmpty() }
-    }
-
-
-    private fun createLaggedSeries(seriesA: List<Double>, seriesB: List<Double>, lag: Int): Pair<List<Double>, List<Double>> {
-        if (lag >= seriesA.size || lag >= seriesB.size) return emptyList<Double>() to emptyList<Double>()
-
-        val laggedA = seriesA.dropLast(lag)
-        val laggedB = seriesB.drop(lag)
-
-        val alignedA = mutableListOf<Double>()
-        val alignedB = mutableListOf<Double>()
-
-        for (i in 0 until kotlin.math.min(laggedA.size, laggedB.size)) {
-            val valA = laggedA[i]
-            val valB = laggedB[i]
-            if (!valA.isNaN() && !valB.isNaN()) {
-                alignedA.add(valA)
-                alignedB.add(valB)
-            }
-        }
-        return alignedA to alignedB
-    }
-
-    private fun calculatePearsonCorrelation(x: List<Double>, y: List<Double>): Double {
-        if (x.size != y.size || x.size < 2) return Double.NaN
-
-        val n = x.size.toDouble()
-
-        val sumX = x.sum()
-        val sumY = y.sum()
-        val sumXY = x.zip(y) { xi, yi -> xi * yi }.sum()
-        val sumX2 = x.sumOf { it * it }
-        val sumY2 = y.sumOf { it * it }
-
-        val numerator = n * sumXY - sumX * sumY
-        val denominatorX = n * sumX2 - sumX * sumX
-        val denominatorY = n * sumY2 - sumY * sumY
-
-        if (denominatorX <= 0 || denominatorY <= 0) return Double.NaN
-
-        return numerator / kotlin.math.sqrt(denominatorX * denominatorY)
-    }
-
-    private fun calculateInsightfulness(
-        metricA: String,
-        metricB: String,
-        lag: Int,
-        isPositiveCorrelation: Boolean
-    ): Double {
-        var score = 1.0
-
-        val groupA = symptomGroups[metricA]
-        val groupB = symptomGroups[metricB]
-
-        if (groupA != null && groupB != null && groupA != groupB) {
-            score += 2.0
-        }
-
-        if (lag > 0) {
-            score += 1.0
-        }
-
-        val pairKey1 = "$metricA-$metricB"
-        val pairKey2 = "$metricB-$metricA"
-        if (selfEvidentPairs.contains(pairKey1) || selfEvidentPairs.contains(pairKey2)) {
-            score -= 1.5
-        }
-
-        return kotlin.math.max(0.0, score)
+        Log.d("CorrelationCalc", "Finished correlation calculation. Total significant correlations found: ${calculatedCorrelations.size}.")
+        return calculatedCorrelations
     }
 }
