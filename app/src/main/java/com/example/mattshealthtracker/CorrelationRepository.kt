@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.util.Log
+import kotlin.math.abs
 
 class CorrelationRepository(context: Context) {
 
@@ -11,38 +12,17 @@ class CorrelationRepository(context: Context) {
 
     companion object {
         private const val TAG = "CorrelationRepo"
-        // Define a threshold for preference score to consider an item "suppressed"
-        // Correlations with preferenceScore below this will be filtered out by default
-        const val SUPPRESSION_THRESHOLD = -5 // Example: 5 thumbs down
+        const val SUPPRESSION_THRESHOLD = -5
     }
 
     // --- Core Operations ---
 
-    /**
-     * Triggers the comprehensive correlation calculation and storage process
-     * managed by CorrelationDatabaseHelper.
-     * This is the primary way to get correlations into the database now.
-     * This method doesn't take a single Correlation object for insert/update,
-     * as the helper handles the full calculation and cherry-picking internally.
-     */
     fun calculateAndStoreAllCorrelations(allHealthData: List<HealthData>): List<Correlation> {
         return dbHelper.calculateAndStoreAllCorrelations(allHealthData)
     }
 
-    /**
-     * Updates the preference score for a specific correlation identified by its ID.
-     */
     fun updatePreference(correlationId: Long, delta: Int) {
         val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
-            // Fix: Directly use SQL to increment/decrement the existing value
-            // This is safer than reading it into Kotlin, incrementing, and writing back,
-            // as it avoids race conditions if multiple updates happen concurrently.
-            // However, ContentValue.put() does not directly accept SQL expressions.
-            // We need to use execSQL for this specific kind of update.
-        }
-
-        // Using execSQL for direct SQL update for preference
         val sql = "UPDATE ${CorrelationDatabaseHelper.TABLE_CORRELATIONS} " +
                 "SET ${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} = ${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} + ? " +
                 "WHERE ${CorrelationDatabaseHelper.COLUMN_ID} = ?"
@@ -57,18 +37,12 @@ class CorrelationRepository(context: Context) {
         }
     }
 
-    // --- Query Operations ---
+    // --- Query Operations (No changes needed here, as the change is in the helper) ---
 
-    /**
-     * Retrieves correlations for the "Top N" display, ordered by composite score.
-     * Filters out correlations below the preference suppression threshold.
-     */
     fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
         val db = dbHelper.readableDatabase
         val correlations = mutableListOf<Correlation>()
 
-        // Order by Insightfulness (desc), then Confidence (abs desc), then Preference (desc)
-        // Use ABS(confidence) for sorting strength regardless of positive/negative direction
         val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
@@ -80,16 +54,25 @@ class CorrelationRepository(context: Context) {
         try {
             cursor = db.query(
                 CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                null, // All columns
+                null,
                 selection,
                 selectionArgs,
-                null, // Group by
-                null, // Having
+                null,
+                null,
                 orderBy,
-                limit.toString() // LIMIT clause
+                null
             )
 
-            correlations.addAll(cursorToCorrelations(cursor))
+            val allRetrievedCorrelations = cursorToCorrelations(cursor)
+            val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+
+            return filteredCorrelations
+                .sortedWith(
+                    compareByDescending<Correlation> { abs(it.confidence) }
+                        .thenByDescending { it.insightfulnessScore }
+                        .thenByDescending { it.preferenceScore }
+                )
+                .take(limit)
         } catch (e: Exception) {
             Log.e(TAG, "Error getting top correlations: ${e.message}", e)
         } finally {
@@ -99,15 +82,10 @@ class CorrelationRepository(context: Context) {
         return correlations
     }
 
-    /**
-     * Retrieves all correlations, including those below the suppression threshold,
-     * ordered by a composite score. This is for your "Show All Correlations" list.
-     */
     fun getAllCorrelations(): List<Correlation> {
         val db = dbHelper.readableDatabase
         val correlations = mutableListOf<Correlation>()
 
-        // Order by Insightfulness (desc), then Confidence (abs desc), then Preference (desc)
         val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
                 "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
@@ -116,15 +94,23 @@ class CorrelationRepository(context: Context) {
         try {
             cursor = db.query(
                 CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                null, // All columns
-                null, // No selection (no WHERE clause)
-                null, // No selection arguments
-                null, // Group by
-                null, // Having
+                null,
+                null,
+                null,
+                null,
+                null,
                 orderBy,
-                null // No LIMIT
+                null
             )
-            correlations.addAll(cursorToCorrelations(cursor))
+            val allRetrievedCorrelations = cursorToCorrelations(cursor)
+            val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+
+            return filteredCorrelations
+                .sortedWith(
+                    compareByDescending<Correlation> { abs(it.confidence) }
+                        .thenByDescending { it.insightfulnessScore }
+                        .thenByDescending { it.preferenceScore }
+                )
         } catch (e: Exception) {
             Log.e(TAG, "Error getting all correlations: ${e.message}", e)
         } finally {
@@ -137,22 +123,56 @@ class CorrelationRepository(context: Context) {
     // --- Helper Methods ---
 
     /**
+     * Filters a list of correlations to ensure only the highest strength correlation
+     * is kept for each unique combination of (Base Symptom A, Base Symptom B, AND Lag).
+     */
+    private fun filterForHighestStrengthPerBasePair(correlations: List<Correlation>): List<Correlation> {
+        // Key now includes the lag to distinguish between different lag relationships
+        val bestCorrelationsPerPairAndLag = mutableMapOf<String, Correlation>()
+
+        for (correlation in correlations) {
+            // Create a consistent, normalized key for the base symptom pair AND lag
+            val (s1, s2) = if (correlation.baseSymptomA <= correlation.baseSymptomB) {
+                correlation.baseSymptomA to correlation.baseSymptomB
+            } else {
+                correlation.baseSymptomB to correlation.baseSymptomA
+            }
+            // NEW KEY: Includes lag
+            val pairWithLagKey = "$s1-$s2-${correlation.lag}"
+
+            val existingBest = bestCorrelationsPerPairAndLag[pairWithLagKey]
+
+            // If no correlation exists for this specific (pair + lag), or the current one is stronger, update it.
+            // Note: The database helper's `insertOrUpdateCorrelation` already handles picking the strongest
+            // average-type for a given (baseA, baseB, lag), so this filter primarily ensures
+            // that if multiple records for the same (baseA, baseB, lag) with slightly
+            // different confidences somehow persist (e.g., due to floating point inaccuracies),
+            // or if we decide to change the DB cherry-picking in the future, this layer still
+            // ensures only the single strongest for display.
+            if (existingBest == null || abs(correlation.confidence) > abs(existingBest.confidence)) {
+                bestCorrelationsPerPairAndLag[pairWithLagKey] = correlation
+                Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Lag: ${correlation.lag}, Conf: ${"%.2f".format(correlation.confidence)}) as best for pair+lag '$pairWithLagKey'.")
+            } else {
+                Log.d(TAG, "Filtering: Keeping existing best for pair+lag '$pairWithLagKey' over current. Existing Conf: ${"%.2f".format(existingBest.confidence)}, Current Conf: ${"%.2f".format(correlation.confidence)}.")
+            }
+        }
+        return bestCorrelationsPerPairAndLag.values.toList()
+    }
+
+    /**
      * Helper function to convert a Cursor to a list of Correlation objects.
-     * This is updated to read the new granular columns.
      */
     private fun cursorToCorrelations(cursor: Cursor?): List<Correlation> {
         val correlations = mutableListOf<Correlation>()
         cursor?.use {
             if (it.moveToFirst()) {
                 val idIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_ID)
-                // Get indices for the new granular columns
                 val baseSymptomAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_BASE_SYMPTOM_A)
                 val windowSizeAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_WINDOW_SIZE_A)
                 val calcTypeAIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CALC_TYPE_A)
                 val baseSymptomBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_BASE_SYMPTOM_B)
                 val windowSizeBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_WINDOW_SIZE_B)
                 val calcTypeBIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CALC_TYPE_B)
-
                 val lagIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_LAG)
                 val isPositiveIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_IS_POSITIVE_CORRELATION)
                 val confidenceIndex = it.getColumnIndexOrThrow(CorrelationDatabaseHelper.COLUMN_CONFIDENCE)
@@ -164,7 +184,6 @@ class CorrelationRepository(context: Context) {
                     correlations.add(
                         Correlation(
                             id = it.getLong(idIndex),
-                            // Map to new granular fields
                             baseSymptomA = it.getString(baseSymptomAIndex),
                             windowSizeA = it.getInt(windowSizeAIndex),
                             calcTypeA = it.getString(calcTypeAIndex),
@@ -172,7 +191,7 @@ class CorrelationRepository(context: Context) {
                             windowSizeB = it.getInt(windowSizeBIndex),
                             calcTypeB = it.getString(calcTypeBIndex),
                             lag = it.getInt(lagIndex),
-                            isPositiveCorrelation = it.getInt(isPositiveIndex) == 1, // Store as Int, retrieve as Boolean
+                            isPositiveCorrelation = it.getInt(isPositiveIndex) == 1,
                             confidence = it.getFloat(confidenceIndex),
                             insightfulnessScore = it.getDouble(insightfulnessIndex),
                             preferenceScore = it.getInt(preferenceIndex),
@@ -185,9 +204,6 @@ class CorrelationRepository(context: Context) {
         return correlations
     }
 
-    /**
-     * Closes the database helper. Call this when the app context is no longer needed (e.g., in onDestroy).
-     */
     fun close() {
         dbHelper.close()
     }

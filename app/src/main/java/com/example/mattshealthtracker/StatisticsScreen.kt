@@ -791,7 +791,7 @@ fun CorrelationSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("🔗 Correlations", style = MaterialTheme.typography.titleMedium)
+                Text("🔗  Correlations", style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(
                         imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
