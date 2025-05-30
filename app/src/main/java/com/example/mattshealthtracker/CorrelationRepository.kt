@@ -37,7 +37,7 @@ class CorrelationRepository(context: Context) {
         }
     }
 
-    // --- Query Operations (No changes needed here, as the change is in the helper) ---
+    // --- Query Operations (No changes here, as the change is in the helper) ---
 
     fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
         val db = dbHelper.readableDatabase
@@ -64,6 +64,7 @@ class CorrelationRepository(context: Context) {
             )
 
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
+            // Apply the filter: keep only the highest strength correlation for each base pair
             val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
 
             return filteredCorrelations
@@ -103,6 +104,7 @@ class CorrelationRepository(context: Context) {
                 null
             )
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
+            // Apply the filter: keep only the highest strength correlation for each base pair
             val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
 
             return filteredCorrelations
@@ -123,40 +125,36 @@ class CorrelationRepository(context: Context) {
     // --- Helper Methods ---
 
     /**
-     * Filters a list of correlations to ensure only the highest strength correlation
-     * is kept for each unique combination of (Base Symptom A, Base Symptom B, AND Lag).
+     * Filters a list of correlations to ensure only the single highest strength correlation
+     * is kept for each unique pair of base symptoms (e.g., "Malaise" and "Stress Level"),
+     * regardless of their lag, window size, or calculation type.
      */
     private fun filterForHighestStrengthPerBasePair(correlations: List<Correlation>): List<Correlation> {
-        // Key now includes the lag to distinguish between different lag relationships
-        val bestCorrelationsPerPairAndLag = mutableMapOf<String, Correlation>()
+        // The key is now solely based on the base symptom pair, excluding lag.
+        // This ensures only one entry per unique (symptomA, symptomB) pair is kept.
+        val bestCorrelationsPerPair = mutableMapOf<String, Correlation>()
 
         for (correlation in correlations) {
-            // Create a consistent, normalized key for the base symptom pair AND lag
+            // Create a consistent, normalized key for the base symptom pair
             val (s1, s2) = if (correlation.baseSymptomA <= correlation.baseSymptomB) {
                 correlation.baseSymptomA to correlation.baseSymptomB
             } else {
                 correlation.baseSymptomB to correlation.baseSymptomA
             }
-            // NEW KEY: Includes lag
-            val pairWithLagKey = "$s1-$s2-${correlation.lag}"
+            // KEY: Only includes base symptom names
+            val pairKey = "$s1-$s2"
 
-            val existingBest = bestCorrelationsPerPairAndLag[pairWithLagKey]
+            val existingBest = bestCorrelationsPerPair[pairKey]
 
-            // If no correlation exists for this specific (pair + lag), or the current one is stronger, update it.
-            // Note: The database helper's `insertOrUpdateCorrelation` already handles picking the strongest
-            // average-type for a given (baseA, baseB, lag), so this filter primarily ensures
-            // that if multiple records for the same (baseA, baseB, lag) with slightly
-            // different confidences somehow persist (e.g., due to floating point inaccuracies),
-            // or if we decide to change the DB cherry-picking in the future, this layer still
-            // ensures only the single strongest for display.
+            // If no correlation exists for this pair, or the current one is stronger, update it.
             if (existingBest == null || abs(correlation.confidence) > abs(existingBest.confidence)) {
-                bestCorrelationsPerPairAndLag[pairWithLagKey] = correlation
-                Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Lag: ${correlation.lag}, Conf: ${"%.2f".format(correlation.confidence)}) as best for pair+lag '$pairWithLagKey'.")
+                bestCorrelationsPerPair[pairKey] = correlation
+                Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}) as best for pair '$pairKey'.")
             } else {
-                Log.d(TAG, "Filtering: Keeping existing best for pair+lag '$pairWithLagKey' over current. Existing Conf: ${"%.2f".format(existingBest.confidence)}, Current Conf: ${"%.2f".format(correlation.confidence)}.")
+                Log.d(TAG, "Filtering: Keeping '${existingBest.getDisplayNameA()}' vs '${existingBest.getDisplayNameB()}' (Conf: ${"%.2f".format(existingBest.confidence)}) for pair '$pairKey' over '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}).")
             }
         }
-        return bestCorrelationsPerPairAndLag.values.toList()
+        return bestCorrelationsPerPair.values.toList()
     }
 
     /**
