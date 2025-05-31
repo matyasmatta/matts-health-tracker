@@ -13,7 +13,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
     companion object {
         const val DATABASE_NAME = "correlations.db"
-        const val DATABASE_VERSION = 17 // Increment version for schema change and new logic
+        const val DATABASE_VERSION = 18 // Increment version for schema change and new logic
         const val TABLE_CORRELATIONS = "correlations"
         const val COLUMN_ID = "_id"
 

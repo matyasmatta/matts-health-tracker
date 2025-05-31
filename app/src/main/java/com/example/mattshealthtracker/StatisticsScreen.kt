@@ -69,6 +69,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -402,9 +403,10 @@ fun StatisticsScreen(openedDay: String) {
     val summarySentence by viewModel.summarySentence
     val metricDifferences by viewModel.metricDifferences
 
-    // NEW: Collect correlation states
+    // Collect correlation states
     val correlations by viewModel.correlations.collectAsState()
     val isCalculatingCorrelations by viewModel.isCalculatingCorrelations.collectAsState()
+    val correlationOverviewSentence by viewModel.correlationOverviewSentence.collectAsState() // Collect the overview sentence
     val coroutineScope = rememberCoroutineScope()
 
 
@@ -498,8 +500,10 @@ fun StatisticsScreen(openedDay: String) {
                 CorrelationSection(
                     correlations = correlations,
                     isCalculatingCorrelations = isCalculatingCorrelations,
+                    correlationOverviewSentence = correlationOverviewSentence, // Pass the overview sentence
                     onCalculateCorrelationsClick = { coroutineScope.launch { viewModel.calculateCorrelations() } },
-                    onUpdatePreference = { id, delta -> viewModel.updateCorrelationPreference(id, delta) }
+                    onUpdatePreference = { id, delta -> viewModel.updateCorrelationPreference(id, delta) },
+                    onRandomizeOverviewClick = { coroutineScope.launch { viewModel.randomizeCorrelationOverview(fromTopN = 10) } } // NEW: Pass randomize lambda
                 )
                 Spacer(modifier = Modifier.height(12.dp)) // Spacer after Correlation Section
             }
@@ -614,7 +618,6 @@ fun StatisticsScreen(openedDay: String) {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
-            // Removed old Spacer and CorrelationSection from here
         }
     }
 }
@@ -772,8 +775,10 @@ fun StatisticRow(label: String, value: String, change: Float? = null, isHigherBe
 fun CorrelationSection(
     correlations: List<Correlation>,
     isCalculatingCorrelations: Boolean,
+    correlationOverviewSentence: String,
     onCalculateCorrelationsClick: () -> Unit,
-    onUpdatePreference: (Long, Int) -> Unit
+    onUpdatePreference: (Long, Int) -> Unit,
+    onRandomizeOverviewClick: () -> Unit // NEW: Parameter for the randomize action
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -786,19 +791,49 @@ fun CorrelationSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded }
+                    .clickable { expanded = !expanded } // Clickable on the whole row for expand/collapse
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("🔗  Correlations", style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) "Collapse correlations" else "Expand correlations"
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) { // Group icons together
+                    // NEW: Randomize Icon
+                    IconButton(
+                        onClick = {
+                            // Optionally expand when randomizing for better visibility
+                            // expanded = true
+                            onRandomizeOverviewClick()
+                        },
+                        modifier = Modifier.size(40.dp) // Standard IconButton size
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Pick another insight",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp)) // Space between icons
+
+                    // Existing Expand/Collapse Icon
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(
+                            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (expanded) "Collapse correlations"
+                            else "Expand correlations"
+                        )
+                    }
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Display the one-line overview sentence
+            Text(
+                text = correlationOverviewSentence,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             if (expanded) {
@@ -833,12 +868,8 @@ fun CorrelationSection(
                     }
                 }
             } else {
-                Text(
-                    text = if (correlations.isNotEmpty()) "Tap to view ${correlations.size} discovered relationships" else "Tap to calculate health correlations",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal),
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
-                )
+                // When collapsed, the overview sentence already provides the summary,
+                // so no additional text is needed in this 'else' block.
             }
         }
     }

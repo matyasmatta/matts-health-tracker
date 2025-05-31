@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.abs
 
 // Enum to define available timeframes
 enum class Timeframe(val label: String) {
@@ -29,8 +30,6 @@ enum class Timeframe(val label: String) {
 
 class StatisticsViewModel(applicationContext: Context, private val initialOpenedDay: String) : ViewModel() {
     private val healthDatabaseHelper = HealthDatabaseHelper(applicationContext)
-    // REMOVE: private val correlationDatabaseHelper = CorrelationDatabaseHelper(applicationContext)
-    // ADD: Use CorrelationRepository instead
     private val correlationRepository = CorrelationRepository(applicationContext)
 
     private val _currentOpenedDay = MutableStateFlow(initialOpenedDay)
@@ -70,12 +69,17 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         MetricInfo("Sleep Readiness", { it.sleepReadiness }, isHigherBetter = true)
     )
 
-    // NEW: State for Correlations
+    // State for Correlations
     private val _correlations = MutableStateFlow<List<Correlation>>(emptyList())
     val correlations: StateFlow<List<Correlation>> = _correlations.asStateFlow()
 
     private val _isCalculatingCorrelations = MutableStateFlow(false)
     val isCalculatingCorrelations: StateFlow<Boolean> = _isCalculatingCorrelations.asStateFlow()
+
+    // State for the one-line correlation overview sentence
+    private val _correlationOverviewSentence = MutableStateFlow("Load more data to discover correlations! 📈")
+    val correlationOverviewSentence: StateFlow<String> = _correlationOverviewSentence.asStateFlow()
+
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -88,7 +92,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
                 }
             }
         }
-        loadCorrelations() // NEW: Load existing correlations on ViewModel initialization
+        loadCorrelations() // Load existing correlations on ViewModel initialization
     }
 
     fun updateTimeframe(timeframe: Timeframe) {
@@ -167,13 +171,13 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
 
         _metricDifferences.value = diffMap // Update the state with the calculated differences
 
-        val allStable = differences.all { Math.abs(it.second) <= threshold }
+        val allStable = differences.all { abs(it.second) <= threshold }
 
         var summary: String
         if (allStable) {
             summary = "You're stable! 😊"
         } else {
-            val mostTrendingMetric = differences.maxByOrNull { Math.abs(it.second) }
+            val mostTrendingMetric = differences.maxByOrNull { abs(it.second) }
 
             mostTrendingMetric?.let { (metricName, diff) ->
                 val metricInfo = allMetricsWithGoodBadFlag.first { it.name == metricName }
@@ -192,17 +196,110 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
         return summary to diffMap
     }
 
-    // NEW: Function to load existing correlations
+    // Function to load existing correlations
     fun loadCorrelations() {
         viewModelScope.launch(Dispatchers.IO) {
-            // Using getTopCorrelations() from CorrelationRepository (which includes the filtering)
             val loaded = correlationRepository.getCorrelationsAboveRating()
-            _correlations.value = loaded
+            _correlations.value = loaded // _correlations now holds all relevant correlations
             Log.d("StatisticsViewModel", "Loaded ${loaded.size} correlations.")
+
+            // Initial overview sentence selection (from top 3)
+            randomizeCorrelationOverview(fromTopN = 3) // Use the new function for initial pick
         }
     }
 
-    // NEW: Function to trigger correlation calculation
+    // Function to pick a random correlation from top N and update the overview sentence
+    fun randomizeCorrelationOverview(fromTopN: Int = 10) { // Default to top 10 for explicit randomize button
+        viewModelScope.launch(Dispatchers.IO) {
+            val availableCorrelations = _correlations.value
+
+            if (availableCorrelations.isNotEmpty()) {
+                val relevantCorrelations = availableCorrelations.take(fromTopN) // Take top N for randomization
+                val randomCorrelation = relevantCorrelations.randomOrNull()
+
+                if (randomCorrelation != null) {
+                    _correlationOverviewSentence.value = generateCorrelationOverviewSentence(randomCorrelation)
+                } else {
+                    _correlationOverviewSentence.value = "Hmm, couldn't find a new insight. Maybe log more data! 🧐"
+                }
+            } else {
+                _correlationOverviewSentence.value = "No correlations found yet. Log more data to find insights! 📊"
+            }
+        }
+    }
+
+    // Helper function to generate a nicely worded, fun, emoji-rich correlation overview sentence
+    private fun generateCorrelationOverviewSentence(correlation: Correlation): String {
+        val symptomA = correlation.getDisplayNameA()
+        val symptomB = correlation.getDisplayNameB()
+        val confidence = correlation.confidence
+        val lag = correlation.lag
+        val absConfidence = abs(confidence)
+
+        // Changed to adverbs to fit "seems to [adverb] [verb]" structure
+        val strengthAdverb = when {
+            absConfidence >= 0.7f -> "very strongly"
+            absConfidence >= 0.5f -> "clearly"
+            absConfidence >= 0.3f -> "noticeably"
+            else -> "slightly" // Unlikely to be picked if rating > 0.5 but good for robustness
+        }
+
+        val directionPhrase = when {
+            confidence > 0 -> "boost" // Changed to base verb form
+            confidence < 0 -> "put a damper on" // Changed to base verb form
+            else -> "be surprisingly unrelated to" // Adjusted for new sentence structure
+        }
+
+        val lagPhrase = if (lag > 0) " about $lag day${if (lag != 1) "s" else ""} later" else ""
+
+        val sentenceBuilder = StringBuilder()
+        // New sentence structure: "Symptom A seems to [strength] [direction] Symptom B [lag]!"
+        sentenceBuilder.append("${symptomA} seems to ${strengthAdverb} ${directionPhrase} ${symptomB}${lagPhrase}!")
+
+        // Add emojis based on keywords in symptom names
+        val emojis = mutableSetOf<String>() // Use a set to avoid duplicate emojis
+
+        // Emojis for specific symptoms/categories (ordered by general relevance/preference)
+        if (symptomA.contains("Sleep", ignoreCase = true) || symptomB.contains("Sleep", ignoreCase = true) ||
+            (symptomA.contains("Quality", ignoreCase = true) && (symptomA.contains("Sleep", ignoreCase = true) || symptomB.contains("Sleep", ignoreCase = true))) ||
+            (symptomB.contains("Quality", ignoreCase = true) && (symptomA.contains("Sleep", ignoreCase = true) || symptomB.contains("Sleep", ignoreCase = true)))
+        ) {
+            emojis.add("😴")
+        }
+        if (symptomA.contains("Exercise", ignoreCase = true) || symptomB.contains("Exercise", ignoreCase = true)) {
+            emojis.add("💪")
+        }
+        if (symptomA.contains("Stress", ignoreCase = true) || symptomB.contains("Stress", ignoreCase = true)) {
+            emojis.add("😬")
+        }
+        if (symptomA.contains("Illness", ignoreCase = true) || symptomB.contains("Illness", ignoreCase = true) ||
+            symptomA.contains("Malaise", ignoreCase = true) || symptomB.contains("Malaise", ignoreCase = true) ||
+            symptomA.contains("Throat", ignoreCase = true) || symptomB.contains("Throat", ignoreCase = true) ||
+            symptomA.contains("Lymphadenopathy", ignoreCase = true) || symptomB.contains("Lymphadenopathy", ignoreCase = true)) {
+            emojis.add("🤒")
+        }
+        if (symptomA.contains("Depression", ignoreCase = true) || symptomB.contains("Depression", ignoreCase = true) ||
+            symptomA.contains("Hopelessness", ignoreCase = true) || symptomB.contains("Hopelessness", ignoreCase = true)) {
+            emojis.add("😔")
+        }
+
+        // Emojis for correlation direction (these are prioritized if general ones aren't enough)
+        if (confidence > 0) {
+            emojis.add("✨") // Positive correlation
+        } else if (confidence < 0) {
+            emojis.add("📉") // Negative correlation
+        }
+
+        // Append collected emojis, taking at most 2
+        if (emojis.isNotEmpty()) {
+            sentenceBuilder.append(" ${emojis.take(2).joinToString(" ")}") // Limit to at most 2 emojis
+        }
+
+        return sentenceBuilder.toString()
+    }
+
+
+    // Function to trigger correlation calculation
     fun calculateCorrelations() {
         viewModelScope.launch(Dispatchers.IO) {
             _isCalculatingCorrelations.value = true
@@ -214,6 +311,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
                 Log.d("StatisticsViewModel", "Not enough data for correlation calculation (min 15 days needed). Found: ${historicalData.size}")
                 _isCalculatingCorrelations.value = false
                 _correlations.value = emptyList() // Clear correlations if not enough data
+                _correlationOverviewSentence.value = "Not enough data (min 15 days) to calculate correlations. 🤷‍♀️"
                 return@launch // Exit coroutine
             }
 
@@ -224,13 +322,14 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
                 loadCorrelations() // Reload all correlations after calculation to update UI
             } catch (e: Exception) {
                 Log.e("StatisticsViewModel", "Error during correlation calculation: ${e.message}", e)
+                _correlationOverviewSentence.value = "Oops! Something went wrong calculating correlations. 🐞"
             } finally {
                 _isCalculatingCorrelations.value = false
             }
         }
     }
 
-    // NEW: Function to update a correlation's preference score
+    // Function to update a correlation's preference score
     fun updateCorrelationPreference(correlationId: Long, delta: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             correlationRepository.updatePreference(correlationId, delta)
@@ -241,8 +340,6 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     override fun onCleared() {
         super.onCleared()
         healthDatabaseHelper.close()
-        // REMOVE: correlationDatabaseHelper.close()
-        // ADD: Close correlationRepository (which will close its internal dbHelper)
         correlationRepository.close()
     }
 }

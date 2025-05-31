@@ -84,8 +84,8 @@ data class Correlation(
 
         // Apply weights to normalized values
         val rating = (normalizedPreference * 0.40f) +
-                (normalizedInsightfulness * 0.30f) +
-                (normalizedConfidence * 0.30f)
+                (normalizedInsightfulness * 0.20f) +
+                (normalizedConfidence * 0.40f)
 
         // Ensure the final rating is also within 0.0 and 1.0, though it should be if components are normalized
         return rating.coerceIn(0.0f, 1.0f)
