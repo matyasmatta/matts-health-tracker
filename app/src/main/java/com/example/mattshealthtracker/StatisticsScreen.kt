@@ -897,12 +897,25 @@ fun CorrelationItem(
                     progress = normalizedPreference.coerceIn(0f, 1f),
                     modifier = Modifier.weight(1f),
                     color = when {
-                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.tertiary
-                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.secondary
+                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.secondary
+                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.error
                         else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     }
                 )
                 Text(" ${correlation.preferenceScore}", style = MaterialTheme.typography.labelSmall)
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+
+            // --- Insightfulness Bar ---
+            // InsightfulnessScore is already normalized from 0.0f to 1.0f
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Insight:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                LinearProgressIndicator(
+                    progress = correlation.insightfulnessScore, // Use directly as it's 0-1
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.inversePrimary // A new color from your theme
+                )
+                Text(" ${String.format("%.2f", correlation.insightfulnessScore)}", style = MaterialTheme.typography.labelSmall)
             }
             Spacer(modifier = Modifier.height(2.dp))
 

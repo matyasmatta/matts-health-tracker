@@ -1,6 +1,8 @@
 // In a file named 'Correlation.kt'
 package com.example.mattshealthtracker
 
+import kotlin.math.abs
+
 // Model for a single detected correlation
 data class Correlation(
     val id: Long = 0, // Database ID, 0 for new entries
@@ -17,7 +19,7 @@ data class Correlation(
     val lag: Int, // 0 for contemporaneous, positive for lagged (A -> B after `lag` days)
     val isPositiveCorrelation: Boolean, // True if both increase/decrease together, False if one increases and other decreases
     val confidence: Float, // Pearson R value (-1.0 to 1.0), representing strength and direction.
-    val insightfulnessScore: Double, // Your calculated score. If directly from Pearson R, will be -1.0 to 1.0.
+    val insightfulnessScore: Float, // Your calculated score, now normalized from 0.0 to 1.0.
     var preferenceScore: Int = 0, // User's preference, starts at 0. Can be negative.
     val lastCalculatedDate: Long // Unix timestamp (milliseconds) of when this correlation was last detected/updated
 ) {
@@ -53,6 +55,40 @@ data class Correlation(
     override fun toString(): String {
         val correlationType = if (isPositiveCorrelation) "positive" else "negative"
         return "Correlation(id=$id, ${getDisplayNameA()} vs ${getDisplayNameB()}, lag=$lag, type=$correlationType, conf=${"%.2f".format(confidence)}, insight=${"%.2f".format(insightfulnessScore)}, pref=$preferenceScore, avgInfo=${getAverageInfo()})"
+    }
+
+    /**
+     * Calculates a combined rating for the correlation based on weighted components.
+     * Components are normalized to a 0.0 to 1.0 range before weighting.
+     *
+     * Weights:
+     * - Preference: 40% (0.40)
+     * - Insightfulness: 30% (0.30)
+     * - Confidence (absolute strength): 30% (0.30)
+     *
+     * @return A Float rating between 0.0 and 1.0.
+     */
+    fun getRating(): Float {
+        // 1. Normalize Confidence (absolute strength) to 0.0 - 1.0
+        // abs(confidence) is already in the range 0.0 to 1.0
+        val normalizedConfidence = abs(confidence)
+
+        // 2. Normalize Preference Score to 0.0 - 1.0
+        // Assuming preferenceScore ranges from -3 to +3
+        val minPref = -3.0f
+        val maxPref = 3.0f
+        val normalizedPreference = ((preferenceScore.toFloat() - minPref) / (maxPref - minPref)).coerceIn(0.0f, 1.0f)
+
+        // 3. Insightfulness Score is now assumed to be already normalized between 0.0f and 1.0f
+        val normalizedInsightfulness = insightfulnessScore
+
+        // Apply weights to normalized values
+        val rating = (normalizedPreference * 0.40f) +
+                (normalizedInsightfulness * 0.30f) +
+                (normalizedConfidence * 0.30f)
+
+        // Ensure the final rating is also within 0.0 and 1.0, though it should be if components are normalized
+        return rating.coerceIn(0.0f, 1.0f)
     }
 }
 

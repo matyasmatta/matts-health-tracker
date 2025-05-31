@@ -13,7 +13,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
     companion object {
         const val DATABASE_NAME = "correlations.db"
-        const val DATABASE_VERSION = 11 // Increment version for schema change and new logic
+        const val DATABASE_VERSION = 12 // Increment version for schema change and new logic
         const val TABLE_CORRELATIONS = "correlations"
         const val COLUMN_ID = "_id"
 
@@ -36,8 +36,9 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
         private const val CORRELATION_THRESHOLD = 0.2
         private const val MIN_DATA_POINTS_FOR_CORRELATION = 15
         private const val MAX_LAG_DAYS = 7 // Max lag for correlations
+        private const val TAG = "CorrelationDB"
 
-        // Threshold for a new correlation to replace an existing one (e.g., 0.10 means 10% more significant)
+        // Threshold for a new correlation to replace an existing one (e.10 means 10% more significant)
         private const val REPLACE_SIGNIFICANCE_DIFFERENCE = 0.10f
     }
 
@@ -114,6 +115,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
             put(COLUMN_LAG, newCorrelation.lag)
             put(COLUMN_IS_POSITIVE_CORRELATION, if (newCorrelation.isPositiveCorrelation) 1 else 0)
             put(COLUMN_CONFIDENCE, newCorrelation.confidence)
+            // Insightfulness score is already calculated correctly before calling this method
             put(COLUMN_INSIGHTFULNESS_SCORE, newCorrelation.insightfulnessScore)
             put(COLUMN_LAST_CALCULATED_DATE, newCorrelation.lastCalculatedDate)
             // Initial preference score will be 0 for new insertions or the existing one for updates
@@ -173,7 +175,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
                 val lag = it.getInt(it.getColumnIndexOrThrow(COLUMN_LAG))
                 val isPositiveCorrelation = it.getInt(it.getColumnIndexOrThrow(COLUMN_IS_POSITIVE_CORRELATION)) == 1
                 val confidence = it.getDouble(it.getColumnIndexOrThrow(COLUMN_CONFIDENCE)).toFloat()
-                val insightfulnessScore = it.getDouble(it.getColumnIndexOrThrow(COLUMN_INSIGHTFULNESS_SCORE))
+                val insightfulnessScore = it.getFloat(it.getColumnIndexOrThrow(COLUMN_INSIGHTFULNESS_SCORE))
                 val preferenceScore = it.getInt(it.getColumnIndexOrThrow(COLUMN_PREFERENCE_SCORE))
                 val lastCalculatedDate = it.getLong(it.getColumnIndexOrThrow(COLUMN_LAST_CALCULATED_DATE))
 
@@ -191,14 +193,8 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
         return correlations
     }
 
-    /**
-     * Updates the user's preference score for a given correlation ID.
-     */
-    fun updatePreference(correlationId: Long, delta: Int) {
-        val db = writableDatabase
-        db.execSQL("UPDATE $TABLE_CORRELATIONS SET $COLUMN_PREFERENCE_SCORE = $COLUMN_PREFERENCE_SCORE + ? WHERE $COLUMN_ID = ?", arrayOf(delta.toString(), correlationId.toString()))
-        Log.d("CorrelationDB", "Updated preference for ID $correlationId by $delta")
-    }
+    // --- REMOVED DUPLICATE updatePreference FUNCTION HERE ---
+    // The updatePreference in CorrelationRepository is the correct one.
 
     /**
      * Helper function to extract the value of a specific health metric for a given date
@@ -261,6 +257,72 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
                 else -> null
             }
         }
+    }
+    // This function needs to be placed within your CorrelationDatabaseHelper class
+    private fun calculateInsightfulnessScore(correlation: Correlation): Float {
+        // Step 1: Calculate a raw score based on heuristic rules
+        var rawScore = 0.0f
+
+        val symptomPair = setOf(correlation.baseSymptomA, correlation.baseSymptomB)
+
+        // --- PENALTY RULES ---
+
+        // Highest Penalty: True Tautologies (definitionally intertwined)
+        if (symptomPair == setOf("Depression", "Hopelessness")) {
+            rawScore -= 40.0f // Apply the highest penalty
+            Log.d(TAG, "Insight Calc: HIGHEST PENALTY for true tautology: ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}. Raw score: $rawScore")
+        }
+        // Smaller Penalty: Very Strongly Expected / Direct Symptom-Condition Links
+        else if (symptomPair == setOf("Malaise", "Illness Impact") ||
+            symptomPair == setOf("Illness Impact", "Sore Throat") ||
+            symptomPair == setOf("Illness Impact", "Lymphadenopathy") ||
+            symptomPair == setOf("Malaise", "Sore Throat") ||
+            symptomPair == setOf("Malaise", "Lymphadenopathy")) {
+            rawScore -= 20.0f // Apply a smaller penalty
+            Log.d(TAG, "Insight Calc: SMALLER PENALTY for highly expected link: ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}. Raw score: $rawScore")
+        }
+        // No Penalty for other pairs - they start with 0.0f rawScore and get rewards
+
+        // --- REWARD RULES ---
+
+        // Rule 1: Delay Reward
+        // A delay of one day gives +5, longer delays multiply by 5.0f
+        if (correlation.lag > 0) {
+            rawScore += (correlation.lag * 5.0f) // If lag=1, +5.0f; if lag=2, +10.0f, etc.
+            Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for lag: ${correlation.lag}. Raw score: $rawScore")
+        }
+
+        // Rule 2: Averaging Reward
+        // Check if each symptom is averaged (windowSize > 1 implies averaging is applied)
+        val isSymptomAAveraged = correlation.calcTypeA == "avg" && correlation.windowSizeA > 1
+        val isSymptomBAveraged = correlation.calcTypeB == "avg" && correlation.windowSizeB > 1
+
+        if (isSymptomAAveraged && isSymptomBAveraged) {
+            rawScore += 15.0f // Reward for BOTH symptoms being averaged
+            Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for BOTH being averaged. Raw score: $rawScore")
+        } else if (isSymptomAAveraged || isSymptomBAveraged) {
+            rawScore += 5.0f // Reward for ONLY ONE symptom being averaged
+            Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for ONE being averaged. Raw score: $rawScore")
+        }
+
+        // --- NORMALIZATION ---
+
+        // Step 2: Define the conceptual min/max range for the RAW insightfulness score.
+        // These bounds should encompass the full range of possible raw scores after penalties and rewards.
+        // Max possible raw score: (max_lag * 5.0f) + 15.0f (for both averaged) = e.g., (7 * 5) + 15 = 35 + 15 = 50.0f
+        // Min possible raw score: -20.0f (from highest penalty)
+        // The -50.0f to 50.0f range is still suitable as it covers the actual potential range.
+        val minRawInsight = -50.0f
+        val maxRawInsight = 50.0f
+
+        // Step 3: Coerce the raw score to ensure it's within the defined mapping range.
+        val coercedRawScore = rawScore.coerceIn(minRawInsight, maxRawInsight)
+
+        // Step 4: Normalize the coerced raw score to the 0.0f - 1.0f range.
+        val normalizedScore = (coercedRawScore - minRawInsight) / (maxRawInsight - minRawInsight)
+
+        Log.d(TAG, "Insight Calc: Final Normalized Insightfulness for ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}: ${"%.2f".format(normalizedScore)}")
+        return normalizedScore
     }
 
     /**
@@ -352,8 +414,11 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
                             // Check if the correlation is significant (above CORRELATION_THRESHOLD)
                             if (!pearsonCorrelation.isNaN() && absConfidence >= CORRELATION_THRESHOLD) {
-                                // Create the full Correlation object including all granular details
-                                val currentCorrelation = Correlation(
+
+                                // --- FIX START ---
+                                // 1. Create a temporary Correlation object with all fields EXCEPT insightfulnessScore
+                                //    (or with a placeholder)
+                                val tempCorrelationCandidate = Correlation(
                                     baseSymptomA = analysisMetricA.baseMetricName,
                                     windowSizeA = analysisMetricA.windowSize,
                                     calcTypeA = analysisMetricA.calculationType,
@@ -363,10 +428,20 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
                                     lag = lag,
                                     isPositiveCorrelation = pearsonCorrelation > 0,
                                     confidence = pearsonCorrelation.toFloat(),
-                                    insightfulnessScore = pearsonCorrelation.toDouble(),
+                                    insightfulnessScore = 0.0f, // Placeholder, will be overwritten
                                     preferenceScore = 0, // Initial preference for new candidates
                                     lastCalculatedDate = System.currentTimeMillis()
                                 )
+
+                                // 2. Calculate the insightfulness score using the helper function
+                                val calculatedInsightfulness = calculateInsightfulnessScore(tempCorrelationCandidate)
+
+                                // 3. Create the final Correlation object with the correctly calculated insightfulnessScore
+                                val currentCorrelation = tempCorrelationCandidate.copy(
+                                    insightfulnessScore = calculatedInsightfulness
+                                )
+                                // --- FIX END ---
+
 
                                 // Use the base metric names and lag as the key for cherry-picking
                                 val baseKey = Triple(analysisMetricA.baseMetricName, analysisMetricB.baseMetricName, lag)
@@ -378,9 +453,9 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
                                 //    (absConfidence is greater than existingBest.confidence + REPLACE_SIGNIFICANCE_DIFFERENCE).
                                 if (existingBest == null || absConfidence > abs(existingBest.confidence) + REPLACE_SIGNIFICANCE_DIFFERENCE) {
                                     bestCorrelationsPerBasePairAndLag[baseKey] = currentCorrelation
-                                    Log.d("CorrelationCalc", "  -> Candidate: ${currentCorrelation.getDisplayNameA()} vs ${currentCorrelation.getDisplayNameB()} (Lag: $lag, Conf: %.2f). Setting as new best for base pair.".format(absConfidence))
+                                    Log.d("CorrelationCalc", "  -> Candidate: ${currentCorrelation.getDisplayNameA()} vs ${currentCorrelation.getDisplayNameB()} (Lag: $lag, Conf: %.2f, Insight: %.2f). Setting as new best for base pair.".format(absConfidence, currentCorrelation.insightfulnessScore))
                                 } else {
-                                    Log.d("CorrelationCalc", "  -> Candidate: ${currentCorrelation.getDisplayNameA()} vs ${currentCorrelation.getDisplayNameB()} (Lag: $lag, Conf: %.2f). Not significantly better than existing best (Conf: %.2f). Keeping existing.".format(absConfidence, abs(existingBest.confidence)))
+                                    Log.d("CorrelationCalc", "  -> Candidate: ${currentCorrelation.getDisplayNameA()} vs ${currentCorrelation.getDisplayNameB()} (Lag: $lag, Conf: %.2f, Insight: %.2f). Not significantly better than existing best (Conf: %.2f). Keeping existing.".format(absConfidence, currentCorrelation.insightfulnessScore, abs(existingBest.confidence)))
                                 }
                             } else {
                                 Log.d("CorrelationCalc", "  Correlation for ${analysisMetricA.getDisplayName()} vs ${analysisMetricB.getDisplayName()} (Lag: $lag) is not significant (R=%.4f)".format(pearsonCorrelation))

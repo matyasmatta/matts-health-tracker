@@ -220,7 +220,7 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
                             lag = it.getInt(lagIndex),
                             isPositiveCorrelation = it.getInt(isPositiveIndex) == 1,
                             confidence = it.getFloat(confidenceIndex),
-                            insightfulnessScore = it.getDouble(insightfulnessIndex),
+                            insightfulnessScore = it.getFloat(insightfulnessIndex),
                             preferenceScore = it.getInt(preferenceIndex),
                             lastCalculatedDate = it.getLong(lastCalculatedIndex)
                         )
