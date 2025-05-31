@@ -13,7 +13,7 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
     companion object {
         const val DATABASE_NAME = "correlations.db"
-        const val DATABASE_VERSION = 12 // Increment version for schema change and new logic
+        const val DATABASE_VERSION = 17 // Increment version for schema change and new logic
         const val TABLE_CORRELATIONS = "correlations"
         const val COLUMN_ID = "_id"
 
@@ -265,53 +265,84 @@ class CorrelationDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DA
 
         val symptomPair = setOf(correlation.baseSymptomA, correlation.baseSymptomB)
 
-        // --- PENALTY RULES ---
+        // --- Define symptom categories for systematic penalization/rewarding ---
+        val actionableInputs = setOf("Exercise Level", "Sleep Length", "Sleep Readiness")
+        val healthOutcomes = setOf("Malaise", "Stress Level", "Sleep Quality", "Illness Impact", "Depression", "Hopelessness", "Sore Throat", "Lymphadenopathy")
 
-        // Highest Penalty: True Tautologies (definitionally intertwined)
+
+        // --- PENALTY RULES (Increased and More Specific) ---
+
+        // HIGHEST PENALTY: True Tautologies (definitionally intertwined, nearly identical concepts)
         if (symptomPair == setOf("Depression", "Hopelessness")) {
-            rawScore -= 40.0f // Apply the highest penalty
+            rawScore -= 50.0f // Max penalty for direct tautology
             Log.d(TAG, "Insight Calc: HIGHEST PENALTY for true tautology: ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}. Raw score: $rawScore")
         }
-        // Smaller Penalty: Very Strongly Expected / Direct Symptom-Condition Links
-        else if (symptomPair == setOf("Malaise", "Illness Impact") ||
+        // HIGH PENALTY: Very Strongly Expected / Direct Symptom-Symptom Links
+        // These are often manifestations of the same underlying condition or direct consequences.
+        else if (
+            symptomPair == setOf("Malaise", "Illness Impact") ||
             symptomPair == setOf("Illness Impact", "Sore Throat") ||
             symptomPair == setOf("Illness Impact", "Lymphadenopathy") ||
+            symptomPair == setOf("Illness Impact", "Hopelessness") ||
+            symptomPair == setOf("Illness Impact", "Depression") ||
             symptomPair == setOf("Malaise", "Sore Throat") ||
-            symptomPair == setOf("Malaise", "Lymphadenopathy")) {
-            rawScore -= 20.0f // Apply a smaller penalty
-            Log.d(TAG, "Insight Calc: SMALLER PENALTY for highly expected link: ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}. Raw score: $rawScore")
+            symptomPair == setOf("Malaise", "Lymphadenopathy") ||
+            symptomPair == setOf("Sore Throat", "Lymphadenopathy")  // Added common link
+            //symptomPair == setOf("Depression", "Stress Level") // Highly expected psychological link
+        ) {
+            rawScore -= 30.0f // Increased penalty
+            Log.d(TAG, "Insight Calc: HIGH PENALTY for highly expected symptom link: ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()}. Raw score: $rawScore")
         }
-        // No Penalty for other pairs - they start with 0.0f rawScore and get rewards
+
 
         // --- REWARD RULES ---
 
         // Rule 1: Delay Reward
-        // A delay of one day gives +5, longer delays multiply by 5.0f
+        // A delay of one day gives +4, longer delays multiply by 4.0f
         if (correlation.lag > 0) {
-            rawScore += (correlation.lag * 5.0f) // If lag=1, +5.0f; if lag=2, +10.0f, etc.
+            rawScore += (correlation.lag * 4.0f) // Adjusted to 4.0f per day
             Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for lag: ${correlation.lag}. Raw score: $rawScore")
         }
 
         // Rule 2: Averaging Reward
-        // Check if each symptom is averaged (windowSize > 1 implies averaging is applied)
         val isSymptomAAveraged = correlation.calcTypeA == "avg" && correlation.windowSizeA > 1
         val isSymptomBAveraged = correlation.calcTypeB == "avg" && correlation.windowSizeB > 1
 
         if (isSymptomAAveraged && isSymptomBAveraged) {
-            rawScore += 15.0f // Reward for BOTH symptoms being averaged
+            rawScore += 10.0f // Reward for BOTH symptoms being averaged (adjusted)
             Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for BOTH being averaged. Raw score: $rawScore")
         } else if (isSymptomAAveraged || isSymptomBAveraged) {
-            rawScore += 5.0f // Reward for ONLY ONE symptom being averaged
+            rawScore += 5.0f // Reward for ONLY ONE symptom being averaged (adjusted)
             Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for ONE being averaged. Raw score: $rawScore")
         }
+
+        // Rule 3: Actionable Insight Reward (NEW)
+        // Reward correlations where one symptom is an 'actionable input' and the other is a 'health outcome'.
+        val isSymptomAActionable = actionableInputs.contains(correlation.baseSymptomA)
+        val isSymptomBActionable = actionableInputs.contains(correlation.baseSymptomB)
+        val isSymptomAOutcome = healthOutcomes.contains(correlation.baseSymptomA)
+        val isSymptomBOutcome = healthOutcomes.contains(correlation.baseSymptomB)
+
+        // Check if it's a cross-category correlation (Actionable <-> Outcome)
+        if ((isSymptomAActionable && isSymptomBOutcome) || (isSymptomBActionable && isSymptomAOutcome)) {
+            // Ensure it's not both actionable OR both outcomes, but one of each type
+            if (!((isSymptomAActionable && isSymptomBActionable) || (isSymptomAOutcome && isSymptomBOutcome))) {
+                rawScore += 12.0f // Reward for actionable insight, e.g., Exercise Level -> Sleep Quality
+                Log.d(TAG, "Insight Calc: Rewarded ${correlation.getDisplayNameA()} vs ${correlation.getDisplayNameB()} for actionable insight. Raw score: $rawScore")
+            }
+        }
+
 
         // --- NORMALIZATION ---
 
         // Step 2: Define the conceptual min/max range for the RAW insightfulness score.
         // These bounds should encompass the full range of possible raw scores after penalties and rewards.
-        // Max possible raw score: (max_lag * 5.0f) + 15.0f (for both averaged) = e.g., (7 * 5) + 15 = 35 + 15 = 50.0f
-        // Min possible raw score: -20.0f (from highest penalty)
-        // The -50.0f to 50.0f range is still suitable as it covers the actual potential range.
+        // Max possible raw score calculation:
+        // Max Lag Reward (7 days * 4.0f) = 28.0f
+        // Max Averaging Reward (both averaged) = 10.0f
+        // Max Actionable Insight Reward = 12.0f
+        // Total Max Raw Score = 28.0f + 10.0f + 12.0f = 50.0f
+        // Min possible raw score: -50.0f (from highest penalty)
         val minRawInsight = -50.0f
         val maxRawInsight = 50.0f
 

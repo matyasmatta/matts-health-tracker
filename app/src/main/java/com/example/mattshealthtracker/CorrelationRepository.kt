@@ -3,38 +3,33 @@ package com.example.mattshealthtracker
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
-import android.os.Environment // Import Environment for external storage paths
+import android.os.Environment
 import android.util.Log
-import java.io.File // For file operations
-import java.io.FileWriter // For writing to CSV
+import java.io.File
+import java.io.FileWriter
 import kotlin.math.abs
 
-class CorrelationRepository(private val context: Context) { // Make context a private val property
-
+class CorrelationRepository(private val context: Context) {
     private val dbHelper = CorrelationDatabaseHelper(context)
 
     companion object {
         private const val TAG = "CorrelationRepo"
-        const val SUPPRESSION_THRESHOLD = -5
+        const val SUPPRESSION_THRESHOLD = -5 // Minimum preference score to be considered for display
     }
 
     // --- Core Operations ---
 
-    // This method will now trigger the CSV export internally after calculation
     fun calculateAndStoreAllCorrelations(allHealthData: List<HealthData>): List<Correlation> {
         val calculatedCorrelations = dbHelper.calculateAndStoreAllCorrelations(allHealthData)
 
-        // After successful calculation and storage, export the full database
-        // Note: dbHelper.calculateAndStoreAllCorrelations handles its own DB closing.
-        // We'll export from a new readable instance to ensure we get the latest.
-        val exportedFilePath = exportCorrelationsToCsv() // Call the new export function
+        val exportedFilePath = exportCorrelationsToCsv()
         if (exportedFilePath != null) {
             Log.d(TAG, "Database export complete. File: $exportedFilePath")
         } else {
             Log.e(TAG, "Database export failed.")
         }
 
-        return calculatedCorrelations // Return the list of correlations that were stored/updated
+        return calculatedCorrelations
     }
 
     fun updatePreference(correlationId: Long, delta: Int) {
@@ -55,94 +50,87 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
 
     // --- Query Operations ---
 
-    fun getTopCorrelations(limit: Int = 10, minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD): List<Correlation> {
+    /**
+     * Retrieves correlations that meet a minimum rating threshold and preference,
+     * sorted by their overall calculated rating.
+     *
+     * @param minRatingThreshold The minimum combined rating (0.0 to 1.0) for a correlation to be included.
+     * @param minPreferenceThreshold The minimum preference score for a correlation to be considered.
+     * @return A list of filtered and sorted Correlation objects.
+     */
+    fun getCorrelationsAboveRating(
+        minRatingThreshold: Float = 0.5f, // New parameter for rating threshold
+        minPreferenceThreshold: Int = SUPPRESSION_THRESHOLD
+    ): List<Correlation> {
         val db = dbHelper.readableDatabase
-        val correlations = mutableListOf<Correlation>()
-
-        val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
-
-        val selection = "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} >= ?"
-        val selectionArgs = arrayOf(minPreferenceThreshold.toString())
-
         var cursor: Cursor? = null
         try {
+            val selection = "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} >= ?"
+            val selectionArgs = arrayOf(minPreferenceThreshold.toString())
+
             cursor = db.query(
                 CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                null,
-                selection,
-                selectionArgs,
-                null,
-                null,
-                orderBy,
-                null
+                null,           // All columns
+                selection,      // Selection clause based on preference
+                selectionArgs,  // Selection arguments
+                null,           // Group by
+                null,           // Having
+                null,           // ORDER BY (we'll sort in Kotlin)
+                null            // LIMIT (we'll filter in Kotlin)
             )
 
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
-            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB before filtering (getTop).")
+            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB (getCorrelationsAboveRating).")
 
-            val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
-            Log.d(TAG, "Filtered down to ${filteredCorrelations.size} correlations after filtering (getTop).")
+            val filteredByBasePair = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+            Log.d(TAG, "Filtered down to ${filteredByBasePair.size} correlations after base pair filtering (getCorrelationsAboveRating).")
 
-            return filteredCorrelations
-                .sortedWith(
-                    compareByDescending<Correlation> { abs(it.confidence) }
-                        .thenByDescending { it.insightfulnessScore }
-                        .thenByDescending { it.preferenceScore }
-                )
-                .take(limit)
+            // Sort by the calculated rating (getRating()) and then filter by threshold
+            return filteredByBasePair
+                .sortedByDescending { it.getRating() } // Primary sort by rating
+                .filter { it.getRating() >= minRatingThreshold } // Filter out correlations below the threshold
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting top correlations: ${e.message}", e)
+            Log.e(TAG, "Error getting correlations above rating: ${e.message}", e)
         } finally {
             cursor?.close()
             db.close()
         }
-        return correlations
+        return emptyList() // Return empty list on error
     }
 
+
+    /**
+     * Retrieves all correlations, filtered for unique base pairs, and sorted by their overall calculated rating.
+     * This is useful for a comprehensive view sorted by relevance.
+     * @return A list of all unique and sorted Correlation objects.
+     */
     fun getAllCorrelations(): List<Correlation> {
         val db = dbHelper.readableDatabase
-        val correlations = mutableListOf<Correlation>()
-
-        val orderBy = "ABS(${CorrelationDatabaseHelper.COLUMN_CONFIDENCE}) DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_INSIGHTFULNESS_SCORE} DESC, " +
-                "${CorrelationDatabaseHelper.COLUMN_PREFERENCE_SCORE} DESC"
-
         var cursor: Cursor? = null
         try {
             cursor = db.query(
                 CorrelationDatabaseHelper.TABLE_CORRELATIONS,
-                null,
-                null, // No selection for getAllCorrelations
-                null, // No selection arguments
-                null,
-                null,
-                orderBy,
-                null
+                null, null, null, null, null, null, null // No selection or ordering in SQL
             )
             val allRetrievedCorrelations = cursorToCorrelations(cursor)
-            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB before filtering (getAll).")
+            Log.d(TAG, "Retrieved ${allRetrievedCorrelations.size} correlations from DB (getAllCorrelations).")
 
-            val filteredCorrelations = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
-            Log.d(TAG, "Filtered down to ${filteredCorrelations.size} correlations after filtering (getAll).")
+            val filteredByBasePair = filterForHighestStrengthPerBasePair(allRetrievedCorrelations)
+            Log.d(TAG, "Filtered down to ${filteredByBasePair.size} correlations after base pair filtering (getAllCorrelations).")
 
-            return filteredCorrelations
-                .sortedWith(
-                    compareByDescending<Correlation> { abs(it.confidence) }
-                        .thenByDescending { it.insightfulnessScore }
-                        .thenByDescending { it.preferenceScore }
-                )
+            // Sort by the calculated rating (getRating())
+            return filteredByBasePair.sortedByDescending { it.getRating() }
         } catch (e: Exception) {
             Log.e(TAG, "Error getting all correlations: ${e.message}", e)
         } finally {
             cursor?.close()
             db.close()
         }
-        return correlations
+        return emptyList() // Return empty list on error
     }
 
     // --- Helper Methods ---
+    // (filterForHighestStrengthPerBasePair, cursorToCorrelations, exportCorrelationsToCsv, escapeCsv remain the same)
 
     /**
      * Filters a list of correlations to ensure only the single highest strength correlation
@@ -175,6 +163,7 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
             val existingBest = bestCorrelationsPerPair[pairKey]
 
             // If no correlation exists for this pair, or the current one is stronger, update it.
+            // Note: We use absolute confidence for "strength" here, as per previous logic.
             if (existingBest == null || abs(correlation.confidence) > abs(existingBest.confidence)) {
                 bestCorrelationsPerPair[pairKey] = correlation
                 Log.d(TAG, "Filtering: Selected '${correlation.getDisplayNameA()}' vs '${correlation.getDisplayNameB()}' (Conf: ${"%.2f".format(correlation.confidence)}) as best for pair '$pairKey'.")
@@ -241,7 +230,6 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
         var cursor: Cursor? = null
         var filePath: String? = null
         try {
-            // Query all data from the correlations table
             cursor = db.rawQuery("SELECT * FROM ${CorrelationDatabaseHelper.TABLE_CORRELATIONS}", null)
 
             if (cursor == null || cursor.count == 0) {
@@ -249,9 +237,6 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
                 return null
             }
 
-            // Get the app-specific external downloads directory
-            // This directory is located at Android/data/com.your.package.name/files/Downloads
-            // No runtime permissions are needed for this location.
             val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
             downloadsDir?.mkdirs() // Ensure the directory exists
 
@@ -259,23 +244,21 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
             val file = File(downloadsDir, fileName)
             filePath = file.absolutePath
 
-            FileWriter(file).use { writer -> // Use 'use' to ensure writer is closed
-                // Write header row (column names)
+            FileWriter(file).use { writer ->
                 val columnNames = cursor.columnNames
-                writer.append(columnNames.joinToString(",") { it.replace(",", "") }) // Sanitize commas in column names
+                writer.append(columnNames.joinToString(",") { it.replace(",", "") })
                 writer.append("\n")
 
-                // Write data rows
                 while (cursor.moveToNext()) {
                     val rowData = mutableListOf<String>()
                     for (i in columnNames.indices) {
-                        val value = cursor.getString(i) ?: "" // Get string value, default to empty string if null
-                        rowData.add(escapeCsv(value)) // Escape values for CSV (handle commas, quotes, newlines)
+                        val value = cursor.getString(i) ?: ""
+                        rowData.add(escapeCsv(value))
                     }
                     writer.append(rowData.joinToString(","))
                     writer.append("\n")
                 }
-            } // writer.close() is called automatically by .use{}
+            }
 
             Log.d(TAG, "Correlations exported successfully to: $filePath")
             return filePath
@@ -285,17 +268,13 @@ class CorrelationRepository(private val context: Context) { // Make context a pr
             return null
         } finally {
             cursor?.close()
-            // db.close() is managed by CorrelationDatabaseHelper's own methods
-            // or by the caller if this db instance was passed in.
-            // In this specific helper, we opened it, so we close it here.
             db.close()
         }
     }
 
-    // Helper function to escape values for CSV (handle commas, double quotes, and newlines)
     private fun escapeCsv(value: String): String {
         if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
-            return "\"${value.replace("\"", "\"\"")}\"" // Enclose in quotes and escape internal quotes
+            return "\"${value.replace("\"", "\"\"")}\""
         }
         return value
     }

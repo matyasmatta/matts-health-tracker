@@ -881,9 +881,14 @@ fun CorrelationItem(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text("Strength:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
                 LinearProgressIndicator(
-                    progress = abs(correlation.confidence),
+                    progress = abs(correlation.confidence), // Progress is always positive (absolute strength)
                     modifier = Modifier.weight(1f),
-                    color = if (correlation.confidence > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    color = when {
+                        correlation.confidence > 0 -> MaterialTheme.colorScheme.primary // Positive correlation
+                        correlation.confidence == 0f -> MaterialTheme.colorScheme.secondary // No correlation
+                        correlation.confidence < 0 -> MaterialTheme.colorScheme.error // Negative correlation
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback (shouldn't be reached)
+                    }
                 )
                 Text(" ${String.format("%.2f", correlation.confidence)}", style = MaterialTheme.typography.labelSmall)
             }
@@ -897,9 +902,10 @@ fun CorrelationItem(
                     progress = normalizedPreference.coerceIn(0f, 1f),
                     modifier = Modifier.weight(1f),
                     color = when {
-                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.secondary
-                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.primary // Higher than 0
+                        correlation.preferenceScore == 0 -> MaterialTheme.colorScheme.secondary // At 0
+                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.error // Lower than 0
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
                     }
                 )
                 Text(" ${correlation.preferenceScore}", style = MaterialTheme.typography.labelSmall)
@@ -907,13 +913,19 @@ fun CorrelationItem(
             Spacer(modifier = Modifier.height(2.dp))
 
             // --- Insightfulness Bar ---
-            // InsightfulnessScore is already normalized from 0.0f to 1.0f
+            // InsightfulnessScore is already normalized from 0.0f to 1.0f. Mid-value is 0.5.
+            val INSIGHTFULNESS_MID_VALUE = 0.5f
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text("Insight:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
                 LinearProgressIndicator(
                     progress = correlation.insightfulnessScore, // Use directly as it's 0-1
                     modifier = Modifier.weight(1f),
-                    color = MaterialTheme.colorScheme.inversePrimary // A new color from your theme
+                    color = when {
+                        correlation.insightfulnessScore > INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.primary // Higher than 0.5
+                        correlation.insightfulnessScore == INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.secondary // At 0.5
+                        correlation.insightfulnessScore < INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.error // Lower than 0.5
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
+                    }
                 )
                 Text(" ${String.format("%.2f", correlation.insightfulnessScore)}", style = MaterialTheme.typography.labelSmall)
             }

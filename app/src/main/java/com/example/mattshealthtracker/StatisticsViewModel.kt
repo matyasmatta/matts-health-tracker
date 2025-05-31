@@ -196,7 +196,7 @@ class StatisticsViewModel(applicationContext: Context, private val initialOpened
     fun loadCorrelations() {
         viewModelScope.launch(Dispatchers.IO) {
             // Using getTopCorrelations() from CorrelationRepository (which includes the filtering)
-            val loaded = correlationRepository.getTopCorrelations()
+            val loaded = correlationRepository.getCorrelationsAboveRating()
             _correlations.value = loaded
             Log.d("StatisticsViewModel", "Loaded ${loaded.size} correlations.")
         }
