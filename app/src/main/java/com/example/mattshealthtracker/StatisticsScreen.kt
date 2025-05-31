@@ -77,6 +77,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.roundToInt
 
 /**
  * Applies a Savitzky-Golay filter to smooth a list of data points.
@@ -190,6 +193,12 @@ fun HealthLineChart(
 ) {
     val scrollState = rememberScrollState()
 
+    // States for displaying tapped info
+    var selectedPointIndex by remember { mutableStateOf<Int?>(null) }
+    var displayedDate by remember { mutableStateOf<String?>(null) }
+    var displayedValue by remember { mutableStateOf<Float?>(null) }
+
+
     if (dataPoints.isEmpty()) {
         Text("No data to display for $chartTitle.", style = MaterialTheme.typography.bodySmall)
         return
@@ -215,7 +224,6 @@ fun HealthLineChart(
         Modifier.fillMaxWidth()
     }
 
-    // --- MODIFICATION START ---
     // Define the fixed range for your data (0 to 4)
     val dataMin = 0f
     val dataMax = 4f
@@ -230,12 +238,13 @@ fun HealthLineChart(
         // Then, invert it (so 0 is high, 1 is low for Y-axis) and scale to canvas height
         return canvasHeight * (1f - normalizedValue)
     }
-    // --- MODIFICATION END ---
 
+    // Capture colors from MaterialTheme outside the Canvas scope
     val primaryColor = MaterialTheme.colorScheme.primary
     val gridColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val tickColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    val highlightColor = MaterialTheme.colorScheme.tertiary // Captured here
 
     val dates = labels.mapNotNull { dateString: String -> runCatching { LocalDate.parse(dateString) }.getOrNull() }
 
@@ -258,6 +267,34 @@ fun HealthLineChart(
                 .fillMaxWidth()
                 .height(200.dp)
                 .horizontalScroll(scrollState)
+                .pointerInput(Unit) { // Add pointerInput for tap detection
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val xStepPx = pointSpacing.toPx()
+                            // Calculate the x-coordinate relative to the entire chart content
+                            val chartContentX = offset.x + scrollState.value
+
+                            // Determine the tapped index
+                            val potentialIndex = if (xStepPx > 0) {
+                                (chartContentX / xStepPx).roundToInt()
+                            } else {
+                                0 // Handle case with single point or zero spacing
+                            }
+
+                            // Validate the index and update state
+                            if (potentialIndex >= 0 && potentialIndex < smoothedDataPoints.size) {
+                                selectedPointIndex = potentialIndex
+                                displayedDate = labels.getOrNull(potentialIndex) // Get original date label
+                                displayedValue = smoothedDataPoints.getOrNull(potentialIndex) // Get smoothed value
+                            } else {
+                                // Tap outside relevant data area, clear selection
+                                selectedPointIndex = null
+                                displayedDate = null
+                                displayedValue = null
+                            }
+                        }
+                    )
+                }
         ) {
             Canvas(
                 modifier = contentModifier.fillMaxHeight()
@@ -330,6 +367,20 @@ fun HealthLineChart(
                 }
                 // --- END Draw Smoothed Line ---
 
+                // Optional: Draw a visual indicator for the selected point
+                selectedPointIndex?.let { index ->
+                    if (index >= 0 && index < smoothedDataPoints.size) {
+                        val x = index * xStep
+                        val y = mapValueToY(smoothedDataPoints[index], size.height)
+                        drawCircle(
+                            color = highlightColor, // Use the captured highlightColor
+                            radius = 6.dp.toPx(), // Size of the circle
+                            center = Offset(x, y)
+                        )
+                    }
+                }
+
+
                 // Draw Weekly Ticks (Mondays only)
                 weeklyTickIndices.forEach { index ->
                     val x = index * xStep
@@ -356,12 +407,36 @@ fun HealthLineChart(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        // Display selected point info below the chart
+        if (selectedPointIndex != null && displayedDate != null && displayedValue != null) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text(
+                        text = "Date: $displayedDate",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "$chartTitle: %.1f".format(Locale.getDefault(), displayedValue), // Format to 1 decimal
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // Monthly labels
         Box(
             modifier = Modifier
                 .horizontalScroll(scrollState)
                 .then(contentModifier)
-                .fillMaxHeight(0.05f)
+                .fillMaxHeight(0.05f) // Adjusted to ensure text is visible within the box's height
         ) {
             monthlyLabelIndices.forEach { index ->
                 val date = dates.getOrNull(index)
@@ -378,9 +453,9 @@ fun HealthLineChart(
                             fontWeight = FontWeight.Normal
                         ),
                         modifier = Modifier
-                            .offset(x = xPosition - (pointSpacing / 2))
+                            .offset(x = xPosition - (pointSpacing / 2)) // Center the label
                             .wrapContentWidth(align = Alignment.CenterHorizontally)
-                            .align(Alignment.CenterStart),
+                            .align(Alignment.CenterStart), // Align text to the start of the row
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Visible,
