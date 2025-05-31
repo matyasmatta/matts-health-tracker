@@ -80,6 +80,8 @@ import kotlin.math.abs
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.roundToInt
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
 
 /**
  * Applies a Savitzky-Golay filter to smooth a list of data points.
@@ -960,116 +962,129 @@ fun CorrelationItem(
     val MIN_PREFERENCE_BAR_VALUE = -5
     val PREFERENCE_BAR_RANGE = (MAX_PREFERENCE_BAR_VALUE - MIN_PREFERENCE_BAR_VALUE).toFloat()
 
-    Row(
+    // Outer Column for the entire item
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp, horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalAlignment = Alignment.Start // Align content to the start
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            // Main correlation description: "Symptom A increases/decreases with Symptom B"
-            Text(
-                text = "${correlation.getDisplayNameA()} ${
-                    when {
-                        correlation.confidence > 0 -> "increases with"
-                        correlation.confidence < 0 -> "decreases with"
-                        else -> "is unrelated to"
-                    }
-                } ${correlation.getDisplayNameB()}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
+        // FIRST ROW: Main correlation description (takes full width)
+        Text(
+            text = "${correlation.getDisplayNameA()} ${
+                when {
+                    correlation.confidence > 0 -> "increases with"
+                    correlation.confidence < 0 -> "decreases with"
+                    else -> "is unrelated to"
+                }
+            } ${correlation.getDisplayNameB()}",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.fillMaxWidth() // Ensure it uses full width
+        )
 
-            Spacer(modifier = Modifier.height(4.dp)) // Space between main text and bars
+        Spacer(modifier = Modifier.height(8.dp)) // Space between the name and the details row
 
-            // --- Strength Bar ---
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Strength:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
-                LinearProgressIndicator(
-                    progress = abs(correlation.confidence), // Progress is always positive (absolute strength)
-                    modifier = Modifier.weight(1f),
-                    color = when {
-                        correlation.confidence > 0 -> MaterialTheme.colorScheme.primary // Positive correlation
-                        correlation.confidence == 0f -> MaterialTheme.colorScheme.secondary // No correlation
-                        correlation.confidence < 0 -> MaterialTheme.colorScheme.error // Negative correlation
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback (shouldn't be reached)
-                    }
-                )
-                Text(" ${String.format("%.2f", correlation.confidence)}", style = MaterialTheme.typography.labelSmall)
+        // SECOND ROW: Contains two columns for details and buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween // Distribute space between the two columns
+        ) {
+            // LEFT COLUMN: Strength, Preference, Insight bars, and Delay/Average Info
+            Column(modifier = Modifier.weight(1f)) { // This column takes available space
+                // --- Strength Bar ---
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Strength:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                    LinearProgressIndicator(
+                        progress = abs(correlation.confidence), // Progress is always positive (absolute strength)
+                        modifier = Modifier.weight(1f),
+                        color = when {
+                            correlation.confidence > 0 -> MaterialTheme.colorScheme.primary // Positive correlation
+                            correlation.confidence == 0f -> MaterialTheme.colorScheme.secondary // No correlation
+                            correlation.confidence < 0 -> MaterialTheme.colorScheme.error // Negative correlation
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback (shouldn't be reached)
+                        }
+                    )
+                    Text(" ${String.format("%.2f", correlation.confidence)}", style = MaterialTheme.typography.labelSmall)
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // --- Preference Bar ---
+                val normalizedPreference = (correlation.preferenceScore.toFloat() - MIN_PREFERENCE_BAR_VALUE) / PREFERENCE_BAR_RANGE
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Preference:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                    LinearProgressIndicator(
+                        progress = normalizedPreference.coerceIn(0f, 1f),
+                        modifier = Modifier.weight(1f),
+                        color = when {
+                            correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.primary // Higher than 0
+                            correlation.preferenceScore == 0 -> MaterialTheme.colorScheme.secondary // At 0
+                            correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.error // Lower than 0
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
+                        }
+                    )
+                    Text(" ${correlation.preferenceScore}", style = MaterialTheme.typography.labelSmall)
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // --- Insightfulness Bar ---
+                // InsightfulnessScore is already normalized from 0.0f to 1.0f. Mid-value is 0.5.
+                val INSIGHTFULNESS_MID_VALUE = 0.5f
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Insight:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
+                    LinearProgressIndicator(
+                        progress = correlation.insightfulnessScore, // Use directly as it's 0-1
+                        modifier = Modifier.weight(1f),
+                        color = when {
+                            correlation.insightfulnessScore > INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.primary // Higher than 0.5
+                            correlation.insightfulnessScore == INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.secondary // At 0.5
+                            correlation.insightfulnessScore < INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.error // Lower than 0.5
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
+                        }
+                    )
+                    Text(" ${String.format("%.2f", correlation.insightfulnessScore)}", style = MaterialTheme.typography.labelSmall)
+                }
+                Spacer(modifier = Modifier.height(4.dp)) // Added small spacer for visual separation
+
+                // --- Delay and Average Information (on one line, only if applicable) ---
+                val delayText = if (correlation.lag > 0) "Delay: ${correlation.lag} day${if (correlation.lag != 1) "s" else ""}" else ""
+                val averageText = correlation.getAverageInfo() // This now returns empty if no averaging
+
+                val combinedInfo = when {
+                    delayText.isNotEmpty() && averageText.isNotEmpty() -> "$delayText | $averageText"
+                    delayText.isNotEmpty() -> delayText
+                    averageText.isNotEmpty() -> averageText
+                    else -> "" // No delay or averaging information to display
+                }
+
+                if (combinedInfo.isNotEmpty()) {
+                    Text(
+                        text = combinedInfo,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(2.dp))
 
-            // --- Preference Bar ---
-            val normalizedPreference = (correlation.preferenceScore.toFloat() - MIN_PREFERENCE_BAR_VALUE) / PREFERENCE_BAR_RANGE
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Preference:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
-                LinearProgressIndicator(
-                    progress = normalizedPreference.coerceIn(0f, 1f),
-                    modifier = Modifier.weight(1f),
-                    color = when {
-                        correlation.preferenceScore > 0 -> MaterialTheme.colorScheme.primary // Higher than 0
-                        correlation.preferenceScore == 0 -> MaterialTheme.colorScheme.secondary // At 0
-                        correlation.preferenceScore < 0 -> MaterialTheme.colorScheme.error // Lower than 0
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
-                    }
-                )
-                Text(" ${correlation.preferenceScore}", style = MaterialTheme.typography.labelSmall)
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-
-            // --- Insightfulness Bar ---
-            // InsightfulnessScore is already normalized from 0.0f to 1.0f. Mid-value is 0.5.
-            val INSIGHTFULNESS_MID_VALUE = 0.5f
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text("Insight:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(70.dp))
-                LinearProgressIndicator(
-                    progress = correlation.insightfulnessScore, // Use directly as it's 0-1
-                    modifier = Modifier.weight(1f),
-                    color = when {
-                        correlation.insightfulnessScore > INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.primary // Higher than 0.5
-                        correlation.insightfulnessScore == INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.secondary // At 0.5
-                        correlation.insightfulnessScore < INSIGHTFULNESS_MID_VALUE -> MaterialTheme.colorScheme.error // Lower than 0.5
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) // Fallback
-                    }
-                )
-                Text(" ${String.format("%.2f", correlation.insightfulnessScore)}", style = MaterialTheme.typography.labelSmall)
-            }
-            Spacer(modifier = Modifier.height(2.dp))
-
-            // --- Delay and Average Information (on one line, only if applicable) ---
-            val delayText = if (correlation.lag > 0) "Delay: ${correlation.lag} day${if (correlation.lag != 1) "s" else ""}" else ""
-            val averageText = correlation.getAverageInfo() // This now returns empty if no averaging
-
-            val combinedInfo = when {
-                delayText.isNotEmpty() && averageText.isNotEmpty() -> "$delayText | $averageText"
-                delayText.isNotEmpty() -> delayText
-                averageText.isNotEmpty() -> averageText
-                else -> "" // No delay or averaging information to display
-            }
-
-            if (combinedInfo.isNotEmpty()) {
-                Text(
-                    text = combinedInfo,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // --- Preference Buttons ---
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = { onUpdatePreference(correlation.id, 1) },
-                modifier = Modifier.size(40.dp)
+            // RIGHT COLUMN: Preference Buttons
+            Column(
+                horizontalAlignment = Alignment.End, // Align buttons to the end of their column's space
+                verticalArrangement = Arrangement.Center, // Center buttons vertically
+                modifier = Modifier.padding(start = 8.dp) // Small padding to separate from the left column
             ) {
-                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Increase preference")
-            }
-            IconButton(
-                onClick = { onUpdatePreference(correlation.id, -1) },
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Decrease preference")
+                IconButton(
+                    onClick = { onUpdatePreference(correlation.id, 1) },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(Icons.Outlined.ThumbUp, contentDescription = "Increase preference") // Changed to ThumbUp
+                }
+                IconButton(
+                    onClick = { onUpdatePreference(correlation.id, -1) },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(Icons.Outlined.ThumbDown, contentDescription = "Decrease preference") // Changed to ThumbDown
+                }
             }
         }
     }
