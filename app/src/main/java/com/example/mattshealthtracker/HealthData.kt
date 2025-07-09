@@ -31,8 +31,13 @@ data class MedicationData(
     val doxyDosage: Int
 )
 
-data class ExerciseData (
+data class ExerciseData(
     val currentDate: String,
-    val pushups: Int = 0,
-    val posture: Int =0
+    val pushups: Int,
+    val posture: Int,
+    // Add new fields for breathing exercises
+    val relaxMinutes: Int = 0,
+    val sleepMinutes: Int = 0,
+    val napMinutes: Int = 0,
+    val focusMinutes: Int = 0
 )
