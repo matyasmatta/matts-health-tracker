@@ -53,7 +53,8 @@ object AppUiElements {
         expandableContent: @Composable (() -> Unit)? = null, // Can be null if no expandable content
         expandableContentModifier: Modifier = Modifier,
 
-        hideDefaultWhenExpanded: Boolean = false
+        hideDefaultWhenExpanded: Boolean = false,
+        trailingContent: @Composable (() -> Unit)? = null // Optional slot for content next to expand/collapse icon
         // Removed all TextStyle parameters as styling is now handled by the passed composables
     ) {
         Card(
@@ -81,6 +82,11 @@ object AppUiElements {
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         quickGlanceInfo?.invoke()
+                        // NEW: Optional trailing content (e.g., your pencil icon)
+                        if (trailingContent != null) {
+                            Spacer(modifier = Modifier.width(8.dp)) // Add some space
+                            trailingContent()
+                        }
 
                         if (quickGlanceInfo != null && isExpandable) {
                             Spacer(modifier = Modifier.width(4.dp))

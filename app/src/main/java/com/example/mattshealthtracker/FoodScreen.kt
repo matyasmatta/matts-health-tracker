@@ -134,6 +134,8 @@ fun FoodScreen(openedDay: String) {
             }
         }
     }
+    // In your FoodScreen.kt, near other state declarations
+    var showFoodCardSettingsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(openedDay) { // This runs whenever `openedDay` changes
         Log.d("FoodScreen", "LaunchedEffect for openedDay: $openedDay triggered. Reloading data.")
@@ -157,9 +159,9 @@ fun FoodScreen(openedDay: String) {
     // Use a mutableStateListOf to manage card order and visibility
     val cards = remember {
         mutableStateListOf(
-            HealthCard("energy", "🔥 Energy Use Today", true, true),
-            HealthCard("trends", "📊 Dietary Trends", true, false),
-            HealthCard("food_input", "🍎 Food", true, false)
+            HealthCard("energy", "🔥 Energy Use Today", true, false),
+            HealthCard("trends", "📊 Dietary Trends", false, false),
+            HealthCard("food_input", "🍎 Food", true, true)
         )
     }
 
@@ -202,6 +204,53 @@ fun FoodScreen(openedDay: String) {
         }
     )
 
+    // Dialog for editing visible cards
+    if (showEditCardsDialog) {
+        Dialog(onDismissRequest = { showEditCardsDialog = false }) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Edit Visible Cards",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    cards.forEach { card ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(card.title, style = MaterialTheme.typography.bodyLarge)
+                            Switch(
+                                checked = card.isVisible,
+                                onCheckedChange = { isChecked ->
+                                    val index = cards.indexOfFirst { it.id == card.id }
+                                    if (index != -1) {
+                                        cards[index] = card.copy(isVisible = isChecked)
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showEditCardsDialog = false },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         healthConnectViewModel.checkPermissionsAndFetchData()
 
@@ -239,6 +288,80 @@ fun FoodScreen(openedDay: String) {
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // --- Header Row with Title and Edit Icon ---
+        // In your FoodScreen.kt, below your main Column, but still within the @Composable FoodScreen function:
+
+// Dialog for editing food card settings
+        if (showFoodCardSettingsDialog) {
+            Dialog(onDismissRequest = { showFoodCardSettingsDialog = false }) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Edit Food Card Settings",
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+
+                        // Find the actual food_input card from your mutableStateListOf `cards`
+                        val foodInputCard = cards.find { it.id == "food_input" }
+
+                        if (foodInputCard != null) {
+                            // Checkbox for visibility
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Show Food Card", style = MaterialTheme.typography.bodyLarge)
+                                Switch(
+                                    checked = foodInputCard.isVisible,
+                                    onCheckedChange = { isChecked ->
+                                        // Update the card's visibility in the mutable list
+                                        val index = cards.indexOfFirst { it.id == foodInputCard.id }
+                                        if (index != -1) {
+                                            cards[index] = foodInputCard.copy(isVisible = isChecked)
+                                        }
+                                    }
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Checkbox for default expanded state
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Expanded by Default", style = MaterialTheme.typography.bodyLarge)
+                                Switch(
+                                    checked = foodInputCard.defaultExpanded,
+                                    onCheckedChange = { isChecked ->
+                                        val index = cards.indexOfFirst { it.id == foodInputCard.id }
+                                        if (index != -1) {
+                                            cards[index] = foodInputCard.copy(defaultExpanded = isChecked)
+                                            // Also update the current expansion state immediately if changed
+                                            foodExpanded.value = isChecked
+                                        }
+                                    }
+                                )
+                            }
+                        } else {
+                            Text("Food card not found.", color = MaterialTheme.colorScheme.error)
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { showFoodCardSettingsDialog = false },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("Done")
+                        }
+                    }
+                }
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -247,8 +370,8 @@ fun FoodScreen(openedDay: String) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Food Tracking for $openedDay",
-                style = MaterialTheme.typography.headlineMedium,
+                text = "Food Tracking",
+                style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f)
             )
             IconButton(
@@ -431,6 +554,13 @@ fun FoodScreen(openedDay: String) {
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 },
+                                // ADD THIS NEW BLOCK:
+                                trailingContent = {
+                                    IconButton(onClick = { showFoodCardSettingsDialog = true }) {
+                                        Icon(Icons.Filled.Edit, contentDescription = "Edit Food Card Settings")
+                                    }
+                                },
+                                // End of new block
                                 expandableContent = {
                                     Column(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1187,5 +1317,6 @@ fun formatMealTypeName(mealType: MealType): String {
         MealType.SNACK3 -> "Snack 3"
     }
 }
+
 
 // --- End NEW FOOD UI COMPONENTS ---
