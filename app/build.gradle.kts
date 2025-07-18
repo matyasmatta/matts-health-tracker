@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.mattshealthtracker"
-    compileSdk = 35
+    compileSdk = 36
 
     packaging {
         resources { // <--- ADD this resources block
@@ -19,7 +19,7 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = 1
-        versionName = "1.8.1"
+        versionName = "1.8.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -74,4 +74,9 @@ dependencies {
     implementation("com.google.http-client:google-http-client-gson:1.41.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("org.apache.commons:commons-math3:3.6.1")
+    implementation("androidx.health.connect:connect-client:1.1.0-rc03") // Check for the latest stable alpha version if available
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
 }

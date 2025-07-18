@@ -88,6 +88,8 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.DinnerDining // Import the new icon
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
@@ -135,8 +137,9 @@ class MainActivity : ComponentActivity() {
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
     object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.MonitorHeart)
     object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.QueryStats)
-    object Exercises : BottomNavItem("exercises", "Routines", Icons.Default.FitnessCenter) // New tab
-    object MedicationTracking : BottomNavItem("medication_tracking", "Medications", Icons.Default.Medication) // New Screen
+    object Food : BottomNavItem("food", "Food", Icons.Default.Restaurant) // NEW: Food Tab
+    object Exercises : BottomNavItem("exercises", "Routines", Icons.Default.FitnessCenter)
+    object MedicationTracking : BottomNavItem("medication_tracking", "Meds", Icons.Default.Medication)
 }
 
 @Composable
@@ -145,7 +148,7 @@ fun HealthTrackerApp(
     onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
 ) {
     var currentScreen by remember { mutableStateOf<BottomNavItem>(BottomNavItem.AddData) }
-    var openedDay by remember { mutableStateOf(AppGlobals.openedDay) } // Single source of truth for openedDay
+    var openedDay by remember { mutableStateOf(AppGlobals.openedDay) }
 
     Log.d("HealthTrackerApp", "Recomposing HealthTrackerApp: openedDay=$openedDay")
 
@@ -156,7 +159,8 @@ fun HealthTrackerApp(
                     BottomNavItem.AddData,
                     BottomNavItem.Statistics,
                     BottomNavItem.Exercises,
-                    BottomNavItem.MedicationTracking
+                    BottomNavItem.MedicationTracking,
+                    BottomNavItem.Food // NEW: Include Food in the list
                 ).forEach { item ->
                     NavigationBarItem(
                         icon = { Icon(imageVector = item.icon, contentDescription = item.label) },
@@ -192,6 +196,7 @@ fun HealthTrackerApp(
                 when (currentScreen) {
                     is BottomNavItem.AddData -> HealthTrackerScreen(openedDay)
                     is BottomNavItem.Statistics -> StatisticsScreen(openedDay)
+                    is BottomNavItem.Food -> FoodScreen(openedDay) // NEW: Display FoodScreen
                     is BottomNavItem.Exercises -> ExercisesScreen(openedDay)
                     is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay)
                 }
@@ -199,7 +204,6 @@ fun HealthTrackerApp(
         }
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
