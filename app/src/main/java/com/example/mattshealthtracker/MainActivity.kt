@@ -357,6 +357,8 @@ fun DateNavigationBar(
     }
 }
 
+// Add this to your SettingsDialog composable (replace the existing one)
+// Add this to your SettingsDialog composable (replace the existing one)
 @Composable
 fun SettingsDialog(
     onDismissRequest: () -> Unit,
@@ -372,10 +374,13 @@ fun SettingsDialog(
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
-        uri?.let { exportDataToCSVZip(context, it) }
+        uri?.let { /* exportDataToCSVZip(context, it) */ } // Commented out exportDataToCSVZip as it's not provided
     }
 
+    // Using remember to observe changes in AppGlobals.energyUnitPreference
     var googleDriveSyncEnabled by remember { mutableStateOf(currentSignedInAccount != null) }
+    var showHealthConnectDialog by remember { mutableStateOf(false) }
+
     // No longer manage signedInAccount state locally, use parameter:
     val signedInAccount = currentSignedInAccount // Use the parameter passed from MainActivity
 
@@ -397,6 +402,31 @@ fun SettingsDialog(
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Settings", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(16.dp))
+
+                Text("Preferences", style = MaterialTheme.typography.titleMedium) // New category
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Energy Unit Switcher (kcal/kJ)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Energy Unit (kcal/kJ)", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = AppGlobals.energyUnitPreference == EnergyUnit.KJ, // True if KJ is selected
+                        onCheckedChange = { isChecked ->
+                            AppGlobals.energyUnitPreference = if (isChecked) EnergyUnit.KJ else EnergyUnit.KCAL
+                            val unitName = if (isChecked) "kJ" else "kcal"
+                            Toast.makeText(context, "Energy unit set to $unitName", Toast.LENGTH_SHORT).show()
+                            Log.d("SettingsDialog", "Energy unit toggled to: ${AppGlobals.energyUnitPreference}")
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp)) // Spacer after preferences
 
                 Text("Data control", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(6.dp))
@@ -440,9 +470,16 @@ fun SettingsDialog(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = {
-                    onDismissRequest()
+                    onDismissRequest() // Placeholder, ideally would trigger import flow
+                    Toast.makeText(context, "Import from CSV (TODO)", Toast.LENGTH_SHORT).show()
                 }) {
                     Text("Import from CSV")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    showHealthConnectDialog = true
+                }) {
+                    Text("🔗 Health Connect Demo")
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -464,6 +501,244 @@ fun SettingsDialog(
                 Text("Made with 💖 in 🇪🇺", style = MaterialTheme.typography.bodySmall)
 
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+    }
+
+    // Show Health Connect Dialog when button is clicked
+    if (showHealthConnectDialog) {
+        HealthConnectDialog(
+            onDismissRequest = { showHealthConnectDialog = false }
+        )
+    }
+}
+
+// New Health Connect Dialog Composable
+@Composable
+fun HealthConnectDialog(
+    onDismissRequest: () -> Unit
+) {
+    val context = LocalContext.current
+
+    // Obtain the ViewModel
+    val healthConnectViewModel: HealthConnectViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+            if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
+                @Suppress("UNCHECKED_CAST")
+                return HealthConnectViewModel(context) as T
+            }
+            throw IllegalArgumentException("Unknown ViewModel class")
+        }
+    })
+
+    // Coroutine scope for launching suspend functions
+    val coroutineScope = rememberCoroutineScope()
+
+    // Activity Result Launcher for Health Connect permissions
+    val requestPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissionsResult ->
+            // Check if all required permissions were granted
+            val allPermissionsGranted = healthConnectViewModel.permissions.all { permissionsResult[it] == true }
+            if (allPermissionsGranted) {
+                Log.d("HealthConnectDialog", "All Health Connect permissions granted.")
+                healthConnectViewModel.permissionsGranted = true // Update ViewModel state
+                coroutineScope.launch {
+                    healthConnectViewModel.checkPermissionsAndFetchData() // Fetch data after permissions granted
+                }
+            } else {
+                Log.w("HealthConnectDialog", "Not all Health Connect permissions granted.")
+                healthConnectViewModel.permissionsGranted = false // Update ViewModel state
+                healthConnectViewModel.errorMessage = "Not all necessary Health Connect permissions were granted."
+            }
+        }
+    )
+
+    // LaunchedEffect to check permissions and fetch data on initial composition
+    LaunchedEffect(Unit) {
+        healthConnectViewModel.checkPermissionsAndFetchData()
+    }
+
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "🔗 Health Connect Demo",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // Health Connect Integration Content
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (healthConnectViewModel.isLoading) {
+                        CircularProgressIndicator()
+                        Text("Loading health data...", style = MaterialTheme.typography.bodyMedium)
+                    } else if (healthConnectViewModel.errorMessage != null) {
+                        Text(
+                            text = "Error: ${healthConnectViewModel.errorMessage}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        // Provide action buttons based on the error
+                        if (!healthConnectViewModel.healthConnectAvailable) {
+                            Button(onClick = { healthConnectViewModel.openHealthConnectSettings() }) {
+                                Text("Install Health Connect App")
+                            }
+                        } else if (!healthConnectViewModel.permissionsGranted) {
+                            Button(onClick = { healthConnectViewModel.requestPermissions(requestPermissionsLauncher) }) {
+                                Text("Grant Health Connect Permissions")
+                            }
+                        } else {
+                            // General retry or open settings if data not found
+                            Button(onClick = {
+                                coroutineScope.launch {
+                                    healthConnectViewModel.checkPermissionsAndFetchData()
+                                }
+                            }) {
+                                Text("Retry Data Fetch")
+                            }
+                        }
+                    } else if (!healthConnectViewModel.healthConnectAvailable) {
+                        Text(
+                            text = "Health Connect is not available on this device.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { healthConnectViewModel.openHealthConnectSettings() }) {
+                            Text("Install Health Connect App")
+                        }
+                    } else if (!healthConnectViewModel.permissionsGranted) {
+                        Text(
+                            text = "Permissions are required to read health data.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = { healthConnectViewModel.requestPermissions(requestPermissionsLauncher) }) {
+                            Text("Grant Health Connect Permissions")
+                        }
+                    } else {
+                        // Display fetched data
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Weight data
+                            healthConnectViewModel.latestWeight?.let { weight ->
+                                Text(
+                                    text = "Latest Weight: ${String.format("%.2f", weight)} kg",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                    textAlign = TextAlign.Center
+                                )
+                            } ?: run {
+                                Text(
+                                    text = "No recent weight data found.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            // BMR data
+                            healthConnectViewModel.bmr?.let { bmr ->
+                                Text(
+                                    text = "Est. BMR: ${String.format("%.0f", bmr)} kcal/day",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            } ?: run {
+                                if (healthConnectViewModel.latestWeight != null) {
+                                    Text(
+                                        text = "Cannot calculate BMR (missing height/age/gender data for demo).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+
+                            // Additional health data
+                            healthConnectViewModel.totalSteps?.let { steps ->
+                                Text(
+                                    text = "Steps Today: ${String.format("%,d", steps)}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            healthConnectViewModel.activeCaloriesBurned?.let { calories ->
+                                Text(
+                                    text = "Active Calories: ${String.format("%.0f", calories)} kcal",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            healthConnectViewModel.totalSleepDuration?.let { sleep ->
+                                Text(
+                                    text = "Sleep Duration: ${sleep.toHours()}h ${sleep.toMinutes() % 60}m",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(onClick = {
+                                    coroutineScope.launch {
+                                        healthConnectViewModel.checkPermissionsAndFetchData()
+                                    }
+                                }) {
+                                    Text("Refresh Data")
+                                }
+
+                                Button(onClick = { healthConnectViewModel.openHealthConnectSettings() }) {
+                                    Text("Settings")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Info text
+                Text(
+                    text = "This demonstrates integration with Health Connect to retrieve health metrics. Ensure the Health Connect app is installed and permissions are granted for accurate data.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Close button
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     TextButton(onClick = onDismissRequest) {
                         Text("Close")
                     }
