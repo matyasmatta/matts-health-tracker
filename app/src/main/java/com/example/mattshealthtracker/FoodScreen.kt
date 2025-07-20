@@ -932,7 +932,6 @@ fun FoodScreen(openedDay: String) {
                 // It's called by the child card (e.g., CollapsibleCard) with the new state.
                 val onExpansionChangedByChild = { newExpandedState: Boolean ->
                     cardExpandedStates[card.id] = newExpandedState
-                    // TODO: Persist card expansion state (e.g., SharedPreferences or DataStore)
                 }
 
                 when (card.id) {
