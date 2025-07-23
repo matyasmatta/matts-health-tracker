@@ -93,6 +93,7 @@ import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.disabled
 
 
 class MainActivity : ComponentActivity() {
@@ -1059,135 +1060,106 @@ fun BrowseDataScreen() {
 @Composable
 fun HealthTrackerScreen(openedDay: String) {
     val context = LocalContext.current
-    val dbHelper = HealthDatabaseHelper(context) // Your existing helper
-    val miscellaneousDbHelper = MiscellaneousDatabaseHelper(context) // *** Instantiate the new helper ***
+    val dbHelper = HealthDatabaseHelper(context)
+    val miscellaneousDbHelper = MiscellaneousDatabaseHelper(context)
 
-    // Log.d("HealthTrackerScreen", "Recomposing HealthTrackerScreen for openedDay=$openedDay")
-
-    // HealthData still only includes the original fields for now
-    var healthData by remember { mutableStateOf(
-        HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
-    ) }
-
-    // Slider state for each group.
-    var symptomValues by remember { mutableStateOf(
-        listOf(
-            healthData.malaise,
-            healthData.soreThroat,
-            healthData.lymphadenopathy
+    // Original HealthData state, loaded from DB
+    var healthDataFromDb by remember(openedDay) { // Renamed for clarity
+        mutableStateOf(
+            HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
         )
-    )}
-    var externalValues by remember { mutableStateOf(
-        listOf(
-            healthData.exerciseLevel,
-            healthData.stressLevel,
-            healthData.illnessImpact
-        )
-    )}
-    var mentalValues by remember { mutableStateOf(
-        listOf(
-            healthData.depression,
-            healthData.hopelessness
-        )
-    )}
-    var sleepValues by remember { mutableStateOf(
-        listOf(
-            healthData.sleepQuality,
-            healthData.sleepLength,
-            healthData.sleepReadiness
-        )
-    )}
-    var notes by remember { mutableStateOf(healthData.notes) }
+    }
 
-    // *** MiscellaneousData state is now managed internally by MiscellaneousTrackers ***
-    // var miscellaneousData by remember { mutableStateOf(MiscellaneousData()) }
+    // UI state for slider values. Initialized from healthDataFromDb, but can be changed by UI.
+    var symptomUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
+    var externalUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
+    var mentalUISliderValues by remember { mutableStateOf(listOf(0f, 0f)) }
+    var sleepUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
+    var notesUI by remember { mutableStateOf("") }
 
+    // UI state for "active" status of symptoms. Derived from symptomUISliderValues.
+    // This will be a list of Booleans, true if symptomUISliderValues[i] > 0f
+    var symptomActiveStates by remember { mutableStateOf(listOf(false, false, false)) }
 
-    // Define labels.
+    // --- Labels ---
     val symptomLabels = listOf("Malaise", "Sore Throat", "Lymphadenopathy")
     val externalLabels = listOf("Exercise Level", "Stress Level", "Illness Impact")
     val mentalLabels = listOf("Depression", "Hopelessness")
     val sleepLabels = listOf("Sleep quality", "Sleep length", "Sleep readiness")
 
-    // Scroll state.
     val scrollState = rememberScrollState()
 
-    // Compute yesterday's date from openedDay (assumed format "yyyy-MM-dd").
+    // --- Yesterday's Data ---
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     val yesterdayDate = try {
         LocalDate.parse(openedDay, formatter).minusDays(1).format(formatter)
-    } catch (e: Exception) {
-        null
-    }
-
-    // State for yesterday's HealthData.
+    } catch (e: Exception) { null }
     var yesterdayHealthData by remember { mutableStateOf<HealthData?>(null) }
-    LaunchedEffect(openedDay) {
+    LaunchedEffect(yesterdayDate) { // Triggered when yesterdayDate string changes
         yesterdayHealthData = yesterdayDate?.let { dbHelper.fetchHealthDataForDate(it) }
-        // *** We are NOT fetching yesterday's miscellaneous data here ***
     }
-
-    // Derive yesterday's slider values if available.
     val yesterdaySymptomValues = yesterdayHealthData?.let {
         listOf(it.malaise, it.soreThroat, it.lymphadenopathy)
     }
-    val yesterdayExternalValues = yesterdayHealthData?.let {
-        listOf(it.exerciseLevel, it.stressLevel, it.illnessImpact)
-    }
-    val yesterdayMentalValues = yesterdayHealthData?.let {
-        listOf(it.depression, it.hopelessness)
-    }
-    val yesterdaySleepValues = yesterdayHealthData?.let {
-        listOf(it.sleepQuality, it.sleepLength, it.sleepReadiness)
-    }
+    // ... other yesterday values ...
 
-    // Function to update the *HealthData* database and healthData state.
-    fun updateHealthData() { // Renamed to clarify it only saves HealthData
-        val updatedHealthData = HealthData(
+
+    // --- Function to Update Database ---
+    fun updateDatabase() {
+        // Values sent to DB are directly from the UI slider states.
+        // If a slider was turned "off" via checkbox, its UI slider value is already 0f.
+        val dataToSave = HealthData(
             currentDate = openedDay,
-            malaise = symptomValues[0],
-            soreThroat = symptomValues[1],
-            lymphadenopathy = symptomValues[2],
-            exerciseLevel = externalValues[0],
-            stressLevel = externalValues[1],
-            illnessImpact = externalValues[2],
-            depression = mentalValues[0],
-            hopelessness = mentalValues[1],
-            sleepQuality = sleepValues[0],
-            sleepLength = sleepValues[1],
-            sleepReadiness = sleepValues[2],
-            notes = notes
-            // MiscellaneousData is NOT included here
+            malaise = symptomUISliderValues[0],
+            soreThroat = symptomUISliderValues[1],
+            lymphadenopathy = symptomUISliderValues[2],
+            exerciseLevel = externalUISliderValues[0], // Assuming no toggles for these yet
+            stressLevel = externalUISliderValues[1],
+            illnessImpact = externalUISliderValues[2],
+            depression = mentalUISliderValues[0],
+            hopelessness = mentalUISliderValues[1],
+            sleepQuality = sleepUISliderValues[0],
+            sleepLength = sleepUISliderValues[1],
+            sleepReadiness = sleepUISliderValues[2],
+            notes = notesUI
         )
-        dbHelper.insertOrUpdateHealthData(updatedHealthData)
-        healthData = updatedHealthData
-        dbHelper.exportToCSV(context) // Consider when and where export should happen
+        dbHelper.insertOrUpdateHealthData(dataToSave)
+        dbHelper.exportToCSV(context) // Consider moving export logic
     }
 
-    // LaunchedEffect to fetch today's HealthData.
+    // --- Load Data and Initialize UI States ---
     LaunchedEffect(openedDay) {
         val fetchedData = dbHelper.fetchHealthDataForDate(openedDay)
             ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
-        healthData = fetchedData
-        symptomValues = listOf(fetchedData.malaise, fetchedData.soreThroat, fetchedData.lymphadenopathy)
-        externalValues = listOf(fetchedData.exerciseLevel, fetchedData.stressLevel, fetchedData.illnessImpact)
-        mentalValues = listOf(fetchedData.depression, fetchedData.hopelessness)
-        sleepValues = listOf(fetchedData.sleepQuality, fetchedData.sleepLength, fetchedData.sleepReadiness)
-        notes = fetchedData.notes
-        // We are NOT loading miscellaneousData from the database here
+        healthDataFromDb = fetchedData
+
+        // Initialize UI slider values from fetched data
+        symptomUISliderValues = listOf(fetchedData.malaise, fetchedData.soreThroat, fetchedData.lymphadenopathy)
+        externalUISliderValues = listOf(fetchedData.exerciseLevel, fetchedData.stressLevel, fetchedData.illnessImpact)
+        mentalUISliderValues = listOf(fetchedData.depression, fetchedData.hopelessness)
+        sleepUISliderValues = listOf(fetchedData.sleepQuality, fetchedData.sleepLength, fetchedData.sleepReadiness)
+        notesUI = fetchedData.notes
+
+        // Initialize active states based on the UI slider values
+        // If value is 0, it's considered inactive. Otherwise, active.
+        symptomActiveStates = symptomUISliderValues.map { it > 0f }
     }
 
-    // Call updateHealthData whenever any *original* slider or field changes.
-    // We are NOT triggering database save for miscellaneousData from here
-    LaunchedEffect(symptomValues, externalValues, mentalValues, sleepValues, notes) {
-        updateHealthData() // Call the renamed function
+    // --- Effect to Save Data when UI states change ---
+    // Note: We react to symptomUISliderValues directly. symptomActiveStates is derived.
+    LaunchedEffect(
+        symptomUISliderValues, externalUISliderValues, mentalUISliderValues,
+        sleepUISliderValues, notesUI, openedDay
+    ) {
+        // Avoid saving initial default values before data for openedDay is loaded.
+        if (healthDataFromDb.currentDate == openedDay) {
+            updateDatabase()
+        }
     }
 
-    // State for the expansion of the Miscellaneous section
     var miscellaneousExpanded by rememberSaveable(openedDay) { mutableStateOf(false) }
 
-
-    // Main layout.
+    // --- Main Layout ---
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1197,56 +1169,91 @@ fun HealthTrackerScreen(openedDay: String) {
     ) {
         Text("Symptoms", style = MaterialTheme.typography.titleLarge)
         SymptomSliderGroup(
-            items = symptomLabels.zip(symptomValues),
+            symptomLabels = symptomLabels,
+            symptomValues = symptomUISliderValues,
+            symptomActiveStates = symptomActiveStates, // Pass the derived active states
             yesterdayValues = yesterdaySymptomValues,
-            onValuesChange = { updatedValues -> symptomValues = updatedValues }
+            onSymptomValueChange = { index, newValue ->
+                val updatedValues = symptomUISliderValues.toMutableList()
+                updatedValues[index] = newValue
+                symptomUISliderValues = updatedValues
+
+                // Also update active state if the value crosses the 0 threshold
+                // This handles the case where user drags slider to 0, which should uncheck the box.
+                val updatedActiveStates = symptomActiveStates.toMutableList()
+                updatedActiveStates[index] = newValue > 0f
+                symptomActiveStates = updatedActiveStates
+            },
+            onSymptomActiveChange = { index, isActive ->
+                val updatedActiveStates = symptomActiveStates.toMutableList()
+                updatedActiveStates[index] = isActive
+                symptomActiveStates = updatedActiveStates
+
+                // If checkbox is toggled, update the corresponding slider value
+                val updatedSliderValues = symptomUISliderValues.toMutableList()
+                if (isActive) {
+                    // When checking the box:
+                    // Option 1: Set to a default non-zero value (e.g., 1f or min of range) if it was 0.
+                    // Option 2: Leave it at 0 for user to adjust.
+                    // Let's go with option 1 for clearer "on" state.
+                    if (updatedSliderValues[index] == 0f) {
+                        updatedSliderValues[index] = 1f // Or your preferred default "on" value like valueRange.start if not 0
+                    }
+                } else {
+                    // When unchecking, always set slider value to 0.
+                    updatedSliderValues[index] = 0f
+                }
+                symptomUISliderValues = updatedSliderValues
+            }
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        // The Miscellaneous Expandable Section is placed here
         ExpandableSection(
             title = " ✨ Miscellaneous",
             expanded = miscellaneousExpanded,
             onExpand = { miscellaneousExpanded = !miscellaneousExpanded },
             content = {
-            // Content of the miscellaneous section
-            MiscellaneousTrackers(
-                date = openedDay, // Pass the current date
-                miscellaneousDbHelper = miscellaneousDbHelper // *** Pass the new helper ***
-            )
-        }
+                MiscellaneousTrackers(
+                    date = openedDay,
+                    miscellaneousDbHelper = miscellaneousDbHelper
+                )
+            }
         )
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
         Text("Externals", style = MaterialTheme.typography.titleLarge)
-        ExternalSliderGroup(
-            items = externalLabels.zip(externalValues),
-            yesterdayValues = yesterdayExternalValues,
-            onValuesChange = { updatedValues -> externalValues = updatedValues }
+        ExternalSliderGroup( // Apply similar pattern if you want toggles here
+            items = externalLabels.zip(externalUISliderValues),
+            yesterdayValues = yesterdayHealthData?.let { listOf(it.exerciseLevel, it.stressLevel, it.illnessImpact) },
+            onValuesChange = { updatedValues -> externalUISliderValues = updatedValues }
         )
         Spacer(modifier = Modifier.height(16.dp))
+
         Text("Mental Health", style = MaterialTheme.typography.titleLarge)
-        MentalSliderGroup(
-            items = mentalLabels.zip(mentalValues),
-            yesterdayValues = yesterdayMentalValues,
-            onValuesChange = { updatedValues -> mentalValues = updatedValues }
+        MentalSliderGroup( // Apply similar pattern if you want toggles here
+            items = mentalLabels.zip(mentalUISliderValues),
+            yesterdayValues = yesterdayHealthData?.let { listOf(it.depression, it.hopelessness) },
+            onValuesChange = { updatedValues -> mentalUISliderValues = updatedValues }
         )
         Spacer(modifier = Modifier.height(16.dp))
+
         Text("Sleep", style = MaterialTheme.typography.titleLarge)
-        SleepSliderGroup(
-            items = sleepLabels.zip(sleepValues),
-            yesterdayValues = yesterdaySleepValues,
-            onValuesChange = { updatedValues -> sleepValues = updatedValues }
+        SleepSliderGroup( // Apply similar pattern if you want toggles here
+            items = sleepLabels.zip(sleepUISliderValues),
+            yesterdayValues = yesterdayHealthData?.let { listOf(it.sleepQuality, it.sleepLength, it.sleepReadiness) },
+            onValuesChange = { updatedValues -> sleepUISliderValues = updatedValues }
         )
         Spacer(modifier = Modifier.height(16.dp))
+
         Text("Notes", style = MaterialTheme.typography.titleLarge)
         TextInputField(
-            text = notes,
-            onTextChange = { newText -> notes = newText }
+            text = notesUI,
+            onTextChange = { newText -> notesUI = newText }
         )
         Spacer(modifier = Modifier.height(10.dp))
     }
 }
+
 
 @Composable
 fun ExpandableSection(
@@ -1359,22 +1366,21 @@ fun MiscellaneousTrackers(
 
 @Composable
 fun NewSliderInput(
-    label: String, // Label for the tracker (e.g., "Malaise", "Energy Level")
-    value: Float, // The current value of the slider
-    valueRange: ClosedFloatingPointRange<Float>, // The range of values (e.g., 0f..4f)
-    steps: Int, // This parameter seems unused in your SliderInput definition, as you use steps = 0 in the internal Slider
-    labels: List<String>, // Labels for the steps/anchors (e.g., "None", "Very Mild", ...)
-    yesterdayValue: Float? = null, // Optional value from yesterday for comparison
-    enabled: Boolean = true, // *** Control the enabled state of the slider ***
-    onValueChange: (Float) -> Unit // Callback when the slider value changes
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int, // Still unused with steps = 0 in Slider
+    labels: List<String>,
+    yesterdayValue: Float? = null,
+    enabled: Boolean = true, // This is the crucial part
+    onValueChange: (Float) -> Unit,
+    // Optional: Add a parameter to explicitly hide when not enabled
+    // showWhenDisabled: Boolean = false
 ) {
-    // Compute the nearest anchor index for today's value to display the corresponding label.
     val nearestIndex = value.roundToInt().coerceIn(0, labels.size - 1)
-    val displayedLabel = labels.getOrNull(nearestIndex) ?: "" // Safely get label
+    val displayedLabelText = labels.getOrNull(nearestIndex) ?: ""
 
-    // Compute fraction for today's value relative to the value range.
     val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-    // Compute fraction for yesterday's value if available.
     val yesterdayFraction = yesterdayValue?.let {
         (it - valueRange.start) / (valueRange.endInclusive - valueRange.start)
     }
@@ -1383,14 +1389,27 @@ fun NewSliderInput(
     var labelWidth by remember { mutableStateOf(0) }
     val density = LocalDensity.current
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // The label text for the item is now handled in the parent Row (e.g., MiscellaneousTrackers)
+    // Decide if the entire Column should be hidden or just its contents disabled
+    // If you want to hide it completely when not enabled (and not showWhenDisabled):
+    // if (!enabled && !showWhenDisabled) {
+    //     Spacer(modifier = Modifier.height(0.dp)) // Effectively hides it
+    //     return
+    // }
 
+    Column(
+        modifier = Modifier.fillMaxWidth()
+        // Optional: reduce opacity if not enabled
+        // .alpha(if (enabled) 1f else 0.5f)
+    ) {
+        // The label for the item (e.g., "Malaise") is now typically outside, in the SliderGroup.
+        // If you still want an internal label, ensure it also respects the `enabled` state.
+
+        // Only show the Box with Slider and markers if enabled, or if you want to show a disabled state
+        // if (enabled || showWhenDisabled) { // Or simply rely on the Slider's enabled state
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { coordinates ->
-                    // Get the width of the slider area to position the label/marker
                     sliderWidth = coordinates.size.width
                 }
         ) {
@@ -1398,88 +1417,132 @@ fun NewSliderInput(
                 value = value,
                 onValueChange = onValueChange,
                 valueRange = valueRange,
-                steps = 0, // Using a continuous slider
-                enabled = enabled, // *** Pass the enabled parameter to the standard Material3 Slider ***
+                steps = 0,
+                enabled = enabled, // Correctly passed
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp) // Add padding around the slider itself
+                    .padding(vertical = 10.dp)
             )
-            // Compute the pixel positions for the thumb and marker.
-            // We need the width of the slider track, which is the sliderWidth.
-            // The position is the fraction multiplied by the available width.
-            val thumbX = fraction * sliderWidth.toFloat() // Use float for calculation
-            val yesterdayX = yesterdayFraction?.times(sliderWidth.toFloat()) // Use float
 
-            // Determine if the yesterday marker is too close to the current thumb
-            val hideYesterdayMarker = yesterdayX != null &&
-                    abs(thumbX - yesterdayX) < with(density) { 10.dp.toPx() } // Check distance in pixels
+            if (enabled) { // Only show markers and current value label if enabled
+                val thumbX = fraction * sliderWidth.toFloat()
+                val yesterdayX = yesterdayFraction?.times(sliderWidth.toFloat())
+                val hideYesterdayMarker = yesterdayX != null &&
+                        abs(thumbX - yesterdayX) < with(density) { 10.dp.toPx() }
 
-            // If yesterday's value is provided and the thumb isn't too close, show a marker.
-            if (yesterdayFraction != null && !hideYesterdayMarker) {
-                Box(
-                    modifier = Modifier
-                        // Offset the marker based on the calculated position, subtracting half its size
-                        .offset(
-                            x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
-                            y = 28.dp // Adjusted vertical offset to place it below the slider track
-                        )
-                        .clip(CircleShape) // Make it a circle
-                        // Adjust marker color/alpha based on enabled state
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if(enabled) 0.3f else 0.1f)) // Semi-transparent grey, less visible when disabled
-                        .size(12.dp) // Size of the marker
-                )
-            }
+                if (yesterdayFraction != null && !hideYesterdayMarker) {
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = with(density) { (yesterdayFraction * sliderWidth - 6).toDp() },
+                                y = 28.dp
+                            )
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)) // No change needed if Slider handles disabled alpha
+                            .size(12.dp)
+                    )
+                }
 
-            // Display the text label corresponding to the slider's current value.
-            if (displayedLabel.isNotEmpty()) { // Only display label if available
-                Text(
-                    text = displayedLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    // Grey out label when disabled, otherwise use default content color
-                    color = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                    modifier = Modifier
-                        // Measure the text width to center it below the thumb
-                        .onGloballyPositioned { coordinates ->
-                            labelWidth = coordinates.size.width
-                        }
-                        // Position the text label based on the thumb's position, centering it
-                        .offset(
-                            x = with(density) { ((fraction * sliderWidth) - labelWidth / 2).toDp() },
-                            y = 60.dp // Adjusted vertical offset to place it below the marker
-                        )
-                )
+                if (displayedLabelText.isNotEmpty()) {
+                    Text(
+                        text = displayedLabelText,
+                        style = MaterialTheme.typography.bodySmall,
+                        // Color already handled by your existing logic based on 'enabled'
+                        color = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        modifier = Modifier
+                            .onGloballyPositioned { coordinates ->
+                                labelWidth = coordinates.size.width
+                            }
+                            .offset(
+                                x = with(density) { ((fraction * sliderWidth) - labelWidth / 2).toDp() },
+                                y = 60.dp
+                            )
+                    )
+                }
+            } else {
+                // Optional: Display "Not tracked" or similar if the slider is disabled
+                // This would go inside the Box, positioned appropriately.
+                // Text(
+                //     text = "Not tracked",
+                //     style = MaterialTheme.typography.bodySmall,
+                //     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                //     modifier = Modifier.align(Alignment.Center) // Example positioning
+                // )
             }
         }
+        // } // End of if (enabled || showWhenDisabled)
     }
 }
+
 
 // --- Slider Group Composables -----------------------------------------------------
 
 @Composable
 fun SymptomSliderGroup(
-    items: List<Pair<String, Float>>,
+    symptomLabels: List<String>,
+    symptomValues: List<Float>,
+    symptomActiveStates: List<Boolean>,
     yesterdayValues: List<Float>? = null,
-    onValuesChange: (List<Float>) -> Unit
+    onSymptomValueChange: (index: Int, newValue: Float) -> Unit,
+    onSymptomActiveChange: (index: Int, isActive: Boolean) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items.forEachIndexed { index, item ->
-            SliderInput(
-                label = item.first,
-                value = item.second,
-                valueRange = 0f..4f,
-                steps = 3,
-                labels = listOf("None", "Very Mild", "Mild", "Moderate", "Severe"),
-                yesterdayValue = yesterdayValues?.getOrNull(index),
-                onValueChange = { newValue ->
-                    val updatedValues = items.mapIndexed { i, pair ->
-                        if (i == index) newValue else pair.second
+    Column(modifier = Modifier.fillMaxWidth()) { // No verticalArrangement needed here as items space themselves
+        symptomLabels.forEachIndexed { index, labelName ->
+            val currentValue = symptomValues.getOrElse(index) { 0f }
+            val isActive = symptomActiveStates.getOrElse(index) { false }
+
+            // Container for each symptom item (Label + Checkbox/Slider row)
+            Column(modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp)) { // Add some padding between items
+                // 1. Symptom Name (Label for the whole item)
+                Text(
+                    text = labelName,
+                    style = MaterialTheme.typography.titleSmall, // Or bodyMedium, bodyLarge etc.
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 4.dp) // Space between label and checkbox/slider
+                )
+
+                // 2. Row for Checkbox and Slider Input (or placeholder)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = isActive,
+                        onCheckedChange = { newActiveState ->
+                            onSymptomActiveChange(index, newActiveState)
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // NewSliderInput is now always present, its 'enabled' state controls its appearance
+                    Box(modifier = Modifier.weight(1f)) {
+                        NewSliderInput(
+                            // The `label` param of NewSliderInput is for the value representation (e.g., "Mild")
+                            // not the main item title.
+                            label = "", // Or pass labelName if NewSliderInput uses it internally (e.g., for accessibility)
+                            value = currentValue,
+                            valueRange = 0f..4f,
+                            steps = 3, // As per your original
+                            labels = listOf("None", "Very Mild", "Mild", "Moderate", "Severe"),
+                            yesterdayValue = yesterdayValues?.getOrNull(index),
+                            enabled = isActive, // Pass the active state to control enabled/disabled appearance
+                            onValueChange = { newValue ->
+                                onSymptomValueChange(index, newValue)
+                            }
+                            // showWhenDisabled = true // If you had this parameter in NewSliderInput
+                        )
                     }
-                    onValuesChange(updatedValues)
                 }
-            )
+            }
+            if (index < symptomLabels.size - 1) {
+                // Divider(modifier = Modifier.padding(vertical = 8.dp)) // Optional: Divider between items
+            }
         }
     }
 }
+
 
 @Composable
 fun ExternalSliderGroup(
