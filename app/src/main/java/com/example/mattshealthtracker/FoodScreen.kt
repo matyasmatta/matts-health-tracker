@@ -73,12 +73,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.automirrored.outlined.StarHalf
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.ReportProblem
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.StarHalf
@@ -104,6 +108,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.requestFocus
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -115,6 +120,9 @@ import kotlinx.coroutines.withContext
 import kotlin.collections.toTypedArray
 import kotlin.math.floor
 import kotlin.math.roundToInt
+import java.time.format.DateTimeFormatter
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
 
 
 // Data class to represent each card's properties
@@ -150,6 +158,265 @@ data class FoodItem(
 )
 
 // --- END NEW DATA MODELS ---
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FoodScreen(openedDay: String) {
+    val context = LocalContext.current
+    val mealTrackerHelper = remember { MealTrackerHelper(context) }
+    val groceryDatabaseHelper = remember { GroceryDatabaseHelper(context) } // Ensure this is initialized
+    val coroutineScope = rememberCoroutineScope()
+
+    val foodItemsByMeal = remember {
+        mutableStateMapOf<MealType, SnapshotStateList<FoodItem>>().apply {
+            MealType.entries.forEach { mealType ->
+                put(mealType, mutableStateListOf()) // Initialize with empty lists
+            }
+        }
+    }
+
+    // State for managing dialog visibility for editing cards
+    var showEditCardsDialog by rememberSaveable { mutableStateOf(false) }
+
+    // Use a mutableStateListOf to manage card order and visibility
+    // Default visibility and expansion should ideally be loaded from preferences/settings
+    val cards = remember {
+        mutableStateListOf(
+            HealthCard("energy", "🔥 Energy Use Today", true, false),
+            HealthCard("trends", "📊 Dietary Trends", false, false),
+            HealthCard("food_input", "🍎 Food", true, true) // Food card initially visible and expanded
+        )
+    }
+
+    // State for individual card expansion (map card ID to its expanded state)
+    val cardExpandedStates = remember {
+        mutableStateMapOf<String, Boolean>().apply {
+            cards.forEach { card ->
+                this[card.id] = card.defaultExpanded
+            }
+        }
+    }
+    // Convenience accessors for specific cards if needed frequently, otherwise use the map
+    val foodExpanded = remember {
+        derivedStateOf { cardExpandedStates["food_input"] ?: true }
+    }
+    // Add similar derivedStateOf for energyExpanded and trendsExpanded if you use them directly elsewhere
+
+    // Initialize HealthConnectViewModel
+    val healthConnectViewModel: HealthConnectViewModel = viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
+                    @Suppress("UNCHECKED_CAST")
+                    return HealthConnectViewModel(context.applicationContext) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class")
+            }
+        }
+    )
+
+    val requestPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissionsResult ->
+            val allPermissionsGranted = healthConnectViewModel.permissions.all { permissionString ->
+                permissionsResult[permissionString] == true
+            }
+
+            if (allPermissionsGranted) {
+                Log.d("FoodScreen", "All Health Connect permissions granted.")
+                healthConnectViewModel.permissionsGranted = true
+                coroutineScope.launch {
+                    healthConnectViewModel.checkPermissionsAndFetchData()
+                }
+            } else {
+                Log.w("FoodScreen", "Not all Health Connect permissions granted.")
+                healthConnectViewModel.permissionsGranted = false
+                // You might want to show a Snackbar or a more persistent message here
+                healthConnectViewModel.errorMessage = "Not all necessary Health Connect permissions were granted. Some features might be unavailable."
+            }
+        }
+    )
+
+    LaunchedEffect(openedDay, mealTrackerHelper) { // Re-run if openedDay or helper changes
+        Log.d("FoodScreen", "LaunchedEffect for openedDay: $openedDay. Loading food items.")
+        MealType.entries.forEach { mealType ->
+            foodItemsByMeal[mealType]?.clear() // Clear previous day's items
+            coroutineScope.launch { // Launch DB operations in a coroutine
+                try {
+                    val loadedItems = mealTrackerHelper.fetchFoodItemsForMeal(openedDay, mealType)
+                    foodItemsByMeal[mealType]?.addAll(loadedItems)
+                    Log.d("FoodScreen", "Loaded ${loadedItems.size} items for $mealType on $openedDay")
+                } catch (e: Exception) {
+                    Log.e("FoodScreen", "Error loading food items for $mealType on $openedDay", e)
+                    // Optionally show an error message to the user
+                }
+            }
+        }
+    }
+
+    // Initial check for permissions when the screen is first composed
+    LaunchedEffect(Unit) {
+        // First, check if Health Connect itself is available on the device
+        // healthConnectViewModel.healthConnectAvailable is updated in ViewModel's init
+        if (!healthConnectViewModel.healthConnectAvailable) {
+            healthConnectViewModel.errorMessage = "Health Connect App is not available or not installed on this device."
+            Log.w("FoodScreen", "Health Connect not available on this device.")
+            // Optionally, guide the user to install Health Connect via openHealthConnectSettings()
+            // if they try to interact with a feature that needs it.
+            // For now, we just set an error message.
+            return@LaunchedEffect // Exit early if HC is not available
+        }
+
+        // If Health Connect is available, then proceed to check/request permissions
+        if (!healthConnectViewModel.permissionsGranted) {
+            // Check if we should show rationale. For simplicity, directly requesting here.
+            // In a real app, you might show a rationale dialog before this.
+            Log.d("FoodScreen", "Health Connect available, permissions not granted. Requesting permissions.")
+            // The permissions array is already prepared in the ViewModel
+            requestPermissionsLauncher.launch(healthConnectViewModel.permissions)
+        } else {
+            // Permissions are already granted, fetch data
+            Log.d("FoodScreen", "Health Connect available and permissions already granted. Fetching data.")
+            coroutineScope.launch {
+                healthConnectViewModel.checkPermissionsAndFetchData()
+            }
+        }
+    }
+
+
+    // Dialog for editing visible cards
+    if (showEditCardsDialog) {
+        Dialog(onDismissRequest = { showEditCardsDialog = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp), // Add padding around the card itself
+                shape = RoundedCornerShape(16.dp) // Softer corners for the dialog
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) { // Padding inside the card
+                    Text(
+                        "Edit Visible Cards",
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    cards.forEach { card ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp), // Spacing between items
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(card.title, style = MaterialTheme.typography.bodyLarge)
+                            Switch(
+                                checked = card.isVisible,
+                                onCheckedChange = { isChecked ->
+                                    val index = cards.indexOfFirst { it.id == card.id }
+                                    if (index != -1) {
+                                        cards[index] = card.copy(isVisible = isChecked)
+                                        // Persist this change to SharedPreferences or database
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = { showEditCardsDialog = false },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Done")
+                    }
+                }
+            }
+        }
+    }
+
+    val screenScrollState = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 8.dp) // Consistent padding
+            .verticalScroll(screenScrollState),
+        verticalArrangement = Arrangement.spacedBy(12.dp) // Space between cards
+    ) {
+        // Optional: Header Row with a button to open "Edit Visible Cards" dialog
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Food Dashboard", // Example Title
+                style = MaterialTheme.typography.titleLarge
+            )
+            IconButton(onClick = { showEditCardsDialog = true }) {
+                Icon(Icons.Filled.Settings, contentDescription = "Edit Visible Cards") // Using a settings icon
+            }
+        }
+
+        // Display error message from HealthConnectViewModel if any
+        healthConnectViewModel.errorMessage?.let {
+            if (it.isNotEmpty()) {
+                Text(
+                    text = it,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
+        }
+
+
+        // --- Render cards based on the `cards` list and their `isVisible` property ---
+        cards.forEach { card ->
+            if (card.isVisible) {
+                // Get current expanded state, defaulting to card's default if not in map yet
+                // This 'currentExpandedState' IS the Boolean value.
+                val currentExpandedState = cardExpandedStates[card.id] ?: card.defaultExpanded
+
+                // This lambda now correctly matches Function1<Boolean, Unit>
+                // It's called by the child card (e.g., CollapsibleCard) with the new state.
+                val onExpansionChangedByChild = { newExpandedState: Boolean ->
+                    cardExpandedStates[card.id] = newExpandedState
+                }
+
+                when (card.id) {
+                    "energy" -> {
+                        EnergyCard(
+                            expanded = currentExpandedState, // Pass the Boolean directly
+                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
+                            healthConnectViewModel = healthConnectViewModel,
+                            openedDay = openedDay,
+                            mealTrackerHelper = mealTrackerHelper
+                        )
+                    }
+                    "trends" -> {
+                        TrendsCard(
+                            expanded = currentExpandedState, // Pass the Boolean directly
+                            onExpandedChange = onExpansionChangedByChild // Pass the correct lambda type
+                            // Pass any necessary data
+                        )
+                    }
+                    "food_input" -> {
+                        FoodInputCard(
+                            expanded = currentExpandedState, // Pass the Boolean directly
+                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
+                            mealTrackerHelper = mealTrackerHelper,
+                            groceryDatabaseHelper = groceryDatabaseHelper,
+                            openedDay = openedDay,
+                            foodItemsByMeal = foodItemsByMeal
+                        )
+                    }
+                    // Add cases for other cards if you have them
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp)) // Extra space at the bottom
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -709,263 +976,6 @@ fun FoodInputCard(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun FoodScreen(openedDay: String) {
-    val context = LocalContext.current
-    val mealTrackerHelper = remember { MealTrackerHelper(context) }
-    val groceryDatabaseHelper = remember { GroceryDatabaseHelper(context) } // Ensure this is initialized
-    val coroutineScope = rememberCoroutineScope()
-
-    val foodItemsByMeal = remember {
-        mutableStateMapOf<MealType, SnapshotStateList<FoodItem>>().apply {
-            MealType.entries.forEach { mealType ->
-                put(mealType, mutableStateListOf()) // Initialize with empty lists
-            }
-        }
-    }
-
-    // State for managing dialog visibility for editing cards
-    var showEditCardsDialog by rememberSaveable { mutableStateOf(false) }
-
-    // Use a mutableStateListOf to manage card order and visibility
-    // Default visibility and expansion should ideally be loaded from preferences/settings
-    val cards = remember {
-        mutableStateListOf(
-            HealthCard("energy", "🔥 Energy Use Today", true, false),
-            HealthCard("trends", "📊 Dietary Trends", false, false),
-            HealthCard("food_input", "🍎 Food", true, true) // Food card initially visible and expanded
-        )
-    }
-
-    // State for individual card expansion (map card ID to its expanded state)
-    val cardExpandedStates = remember {
-        mutableStateMapOf<String, Boolean>().apply {
-            cards.forEach { card ->
-                this[card.id] = card.defaultExpanded
-            }
-        }
-    }
-    // Convenience accessors for specific cards if needed frequently, otherwise use the map
-    val foodExpanded = remember {
-        derivedStateOf { cardExpandedStates["food_input"] ?: true }
-    }
-    // Add similar derivedStateOf for energyExpanded and trendsExpanded if you use them directly elsewhere
-
-    // Initialize HealthConnectViewModel
-    val healthConnectViewModel: HealthConnectViewModel = viewModel(
-        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
-                    @Suppress("UNCHECKED_CAST")
-                    return HealthConnectViewModel(context.applicationContext) as T
-                }
-                throw IllegalArgumentException("Unknown ViewModel class")
-            }
-        }
-    )
-
-    val requestPermissionsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-        onResult = { permissionsResult ->
-            val allPermissionsGranted = healthConnectViewModel.permissions.all { permissionString ->
-                permissionsResult[permissionString] == true
-            }
-
-            if (allPermissionsGranted) {
-                Log.d("FoodScreen", "All Health Connect permissions granted.")
-                healthConnectViewModel.permissionsGranted = true
-                coroutineScope.launch {
-                    healthConnectViewModel.checkPermissionsAndFetchData()
-                }
-            } else {
-                Log.w("FoodScreen", "Not all Health Connect permissions granted.")
-                healthConnectViewModel.permissionsGranted = false
-                // You might want to show a Snackbar or a more persistent message here
-                healthConnectViewModel.errorMessage = "Not all necessary Health Connect permissions were granted. Some features might be unavailable."
-            }
-        }
-    )
-
-    LaunchedEffect(openedDay, mealTrackerHelper) { // Re-run if openedDay or helper changes
-        Log.d("FoodScreen", "LaunchedEffect for openedDay: $openedDay. Loading food items.")
-        MealType.entries.forEach { mealType ->
-            foodItemsByMeal[mealType]?.clear() // Clear previous day's items
-            coroutineScope.launch { // Launch DB operations in a coroutine
-                try {
-                    val loadedItems = mealTrackerHelper.fetchFoodItemsForMeal(openedDay, mealType)
-                    foodItemsByMeal[mealType]?.addAll(loadedItems)
-                    Log.d("FoodScreen", "Loaded ${loadedItems.size} items for $mealType on $openedDay")
-                } catch (e: Exception) {
-                    Log.e("FoodScreen", "Error loading food items for $mealType on $openedDay", e)
-                    // Optionally show an error message to the user
-                }
-            }
-        }
-    }
-
-    // Initial check for permissions when the screen is first composed
-    LaunchedEffect(Unit) {
-        // First, check if Health Connect itself is available on the device
-        // healthConnectViewModel.healthConnectAvailable is updated in ViewModel's init
-        if (!healthConnectViewModel.healthConnectAvailable) {
-            healthConnectViewModel.errorMessage = "Health Connect App is not available or not installed on this device."
-            Log.w("FoodScreen", "Health Connect not available on this device.")
-            // Optionally, guide the user to install Health Connect via openHealthConnectSettings()
-            // if they try to interact with a feature that needs it.
-            // For now, we just set an error message.
-            return@LaunchedEffect // Exit early if HC is not available
-        }
-
-        // If Health Connect is available, then proceed to check/request permissions
-        if (!healthConnectViewModel.permissionsGranted) {
-            // Check if we should show rationale. For simplicity, directly requesting here.
-            // In a real app, you might show a rationale dialog before this.
-            Log.d("FoodScreen", "Health Connect available, permissions not granted. Requesting permissions.")
-            // The permissions array is already prepared in the ViewModel
-            requestPermissionsLauncher.launch(healthConnectViewModel.permissions)
-        } else {
-            // Permissions are already granted, fetch data
-            Log.d("FoodScreen", "Health Connect available and permissions already granted. Fetching data.")
-            coroutineScope.launch {
-                healthConnectViewModel.checkPermissionsAndFetchData()
-            }
-        }
-    }
-
-
-    // Dialog for editing visible cards
-    if (showEditCardsDialog) {
-        Dialog(onDismissRequest = { showEditCardsDialog = false }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp), // Add padding around the card itself
-                shape = RoundedCornerShape(16.dp) // Softer corners for the dialog
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) { // Padding inside the card
-                    Text(
-                        "Edit Visible Cards",
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-
-                    cards.forEach { card ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp), // Spacing between items
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(card.title, style = MaterialTheme.typography.bodyLarge)
-                            Switch(
-                                checked = card.isVisible,
-                                onCheckedChange = { isChecked ->
-                                    val index = cards.indexOfFirst { it.id == card.id }
-                                    if (index != -1) {
-                                        cards[index] = card.copy(isVisible = isChecked)
-                                        // Persist this change to SharedPreferences or database
-                                    }
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Button(
-                        onClick = { showEditCardsDialog = false },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("Done")
-                    }
-                }
-            }
-        }
-    }
-
-    val screenScrollState = rememberScrollState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp) // Consistent padding
-            .verticalScroll(screenScrollState),
-        verticalArrangement = Arrangement.spacedBy(12.dp) // Space between cards
-    ) {
-        // Optional: Header Row with a button to open "Edit Visible Cards" dialog
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "Food Dashboard", // Example Title
-                style = MaterialTheme.typography.titleLarge
-            )
-            IconButton(onClick = { showEditCardsDialog = true }) {
-                Icon(Icons.Filled.Settings, contentDescription = "Edit Visible Cards") // Using a settings icon
-            }
-        }
-
-        // Display error message from HealthConnectViewModel if any
-        healthConnectViewModel.errorMessage?.let {
-            if (it.isNotEmpty()) {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-            }
-        }
-
-
-        // --- Render cards based on the `cards` list and their `isVisible` property ---
-        cards.forEach { card ->
-            if (card.isVisible) {
-                // Get current expanded state, defaulting to card's default if not in map yet
-                // This 'currentExpandedState' IS the Boolean value.
-                val currentExpandedState = cardExpandedStates[card.id] ?: card.defaultExpanded
-
-                // This lambda now correctly matches Function1<Boolean, Unit>
-                // It's called by the child card (e.g., CollapsibleCard) with the new state.
-                val onExpansionChangedByChild = { newExpandedState: Boolean ->
-                    cardExpandedStates[card.id] = newExpandedState
-                }
-
-                when (card.id) {
-                    "energy" -> {
-                        EnergyCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
-                            healthConnectViewModel = healthConnectViewModel
-                        )
-                    }
-                    "trends" -> {
-                        TrendsCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild // Pass the correct lambda type
-                            // Pass any necessary data
-                        )
-                    }
-                    "food_input" -> {
-                        FoodInputCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
-                            mealTrackerHelper = mealTrackerHelper,
-                            groceryDatabaseHelper = groceryDatabaseHelper,
-                            openedDay = openedDay,
-                            foodItemsByMeal = foodItemsByMeal
-                        )
-                    }
-                    // Add cases for other cards if you have them
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(16.dp)) // Extra space at the bottom
-    }
-}
 // --- EXISTING UTILITY COMPONENTS (KEEP AS IS) ---
 @Composable
 fun MealHistoryDialog(
@@ -1037,28 +1047,93 @@ fun MealHistoryDialog(
 fun EnergyCard(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    healthConnectViewModel: HealthConnectViewModel
+    healthConnectViewModel: HealthConnectViewModel,
+    openedDay: String, // Expects "yyyy-MM-dd"
+    mealTrackerHelper: MealTrackerHelper
 ) {
-    // Directly use the properties from the ViewModel
-    val activeCalories by healthConnectViewModel::activeCaloriesBurned
-    val bmrCalories by healthConnectViewModel::bmr // Basal Metabolic Rate
-    val isLoading by healthConnectViewModel::isLoading
-    val errorMessage by healthConnectViewModel::errorMessage
+    // Health Connect Data (from ViewModel)
+    val activeCaloriesHc by healthConnectViewModel::activeCaloriesBurned
+    val bmrCaloriesHc by healthConnectViewModel::bmr
+    val isLoadingHc by healthConnectViewModel::isLoading // isLoading from Health Connect
+    val errorMessageHc by healthConnectViewModel::errorMessage // errorMessage from Health Connect
 
-    // Calculate Total Energy Burned (BMR for the day + Active Calories)
-    // Note: BMR is a rate (kcal/day). If your 'bmr' value is already daily, this is correct.
-    // If 'bmr' is an instantaneous rate, you'd need to integrate it over the day so far.
-    // Assuming 'bmr' in ViewModel is daily BMR.
-    val totalEnergyBurned by remember(activeCalories, bmrCalories) {
-        derivedStateOf {
-            if (activeCalories != null && bmrCalories != null) {
-                activeCalories!! + bmrCalories!!
-            } else if (activeCalories != null) {
-                activeCalories // Only active is available
-            } else if (bmrCalories != null) {
-                bmrCalories // Only BMR is available (less common for "total burned")
+    // State for Food Calories (fetched within this Composable)
+    var foodCaloriesToday by remember(openedDay) { mutableStateOf<Int?>(null) } // Reset if openedDay changes
+    var isLoadingFood by remember(openedDay) { mutableStateOf(true) }
+    var foodError by remember(openedDay) { mutableStateOf<String?>(null) }
+
+    // Coroutine scope for launching data fetching
+    val coroutineScope = rememberCoroutineScope()
+    LaunchedEffect(openedDay) {
+        healthConnectViewModel.fetchDataForDay(openedDay)
+    }
+
+    // --- Data Fetching for Food Calories ---
+    LaunchedEffect(openedDay, mealTrackerHelper) {
+        isLoadingFood = true
+        foodError = null
+        foodCaloriesToday = null // Clear previous data
+
+        // It's crucial that getTotalFoodCaloriesForDay can handle the 'openedDay' string
+        // or that we parse 'openedDay' to LocalDate here if the helper expects LocalDate.
+        // For this example, let's assume getTotalFoodCaloriesForDay is modified to take String
+        // OR we parse it. The latter is preferred.
+
+        if (openedDay != null) {
+            coroutineScope.launch { // Launch a new coroutine for the background task
+                try {
+                    val calories = withContext(Dispatchers.IO) {
+                        // If mealTrackerHelper.getTotalFoodCaloriesForDay expects LocalDate:
+                        mealTrackerHelper.getTotalFoodCaloriesForDay(openedDay)
+                        // If mealTrackerHelper.getTotalFoodCaloriesForDay was changed to expect String:
+                        // mealTrackerHelper.getTotalFoodCaloriesForDay(openedDay)
+                    }
+                    foodCaloriesToday = calories
+                } catch (e: Exception) {
+                    foodError = "Failed to load food calories."
+                    // Log.e("EnergyCard", "Error fetching food calories for $openedDay", e)
+                } finally {
+                    isLoadingFood = false
+                }
+            }
+        } else {
+            foodError = "Invalid date format: $openedDay"
+            isLoadingFood = false
+        }
+    }
+
+    // --- Combined Loading and Error States ---
+    val isOverallLoading = isLoadingHc || isLoadingFood
+    // Prioritize showing specific errors
+    val displayError = foodError ?: errorMessageHc
+
+    // --- Calculations (dependent on fetched data) ---
+    val totalEnergyBurnedHc by remember(activeCaloriesHc, bmrCaloriesHc) {
+        derivedStateOf<Double?> { // Explicitly define the return type of derivedStateOf as Double?
+            val active = activeCaloriesHc // Assuming activeCaloriesHc is Double?
+            val bmr = bmrCaloriesHc     // Assuming bmrCaloriesHc is Double?
+
+            (if (active != null && bmr != null) {
+                active + bmr
+            } else if (active != null) {
+                active // active is Double, so this branch returns Double
+            } else if (bmr != null) {
+                bmr    // bmr is Double, so this branch returns Double
             } else {
-                null // Neither is available
+                null   // All components are null, so the total is null (returns Double?)
+            }) as Double?
+        }
+    }
+
+
+    val netEnergy by remember(totalEnergyBurnedHc, foodCaloriesToday) {
+        derivedStateOf {
+            val burned = totalEnergyBurnedHc
+            val food = foodCaloriesToday
+            if (burned != null && food != null) {
+                 food.toDouble() - burned// foodCaloriesToday is Int?
+            } else {
+                null
             }
         }
     }
@@ -1066,251 +1141,283 @@ fun EnergyCard(
     AppUiElements.CollapsibleCard(
         titleContent = {
             Text(
-                "🔥 Energy Use Today",
+                "🔥 Energy Balance Today",
                 style = MaterialTheme.typography.titleMedium
             )
         },
         expanded = expanded,
         onExpandedChange = onExpandedChange,
         isExpandable = true,
+        hideDefaultWhenExpanded = true, // Key change: This hides defaultContent when expanded
+
+        // --- QUICK GLANCE: JUST NET CALORIES ---
         quickGlanceInfo = {
-            if (!expanded) {
-                when {
-                    isLoading -> CircularProgressIndicator(modifier = Modifier
-                        .size(18.dp)
-                        .padding(start = 8.dp))
-                    totalEnergyBurned != null -> Text(
-                        text = "${String.format("%.0f", totalEnergyBurned)} kcal",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 8.dp)
+            // Visible ONLY when collapsed and hideDefaultWhenExpanded = false (or not set)
+            // AND defaultContent is not present (or defaultContent is used).
+            // For your use case, this is THE content for the collapsed state.
+            val textStyle = MaterialTheme.typography.bodySmall
+            val modifier = Modifier.padding(start = 8.dp)
+
+            when {
+                isOverallLoading -> {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                        Text(" Loading...", style = textStyle, modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
+                displayError != null -> {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = "Error",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(" Data issue", style = textStyle, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
+                netEnergy != null -> {
+                    Text(
+                        text = "${String.format("%.0f", netEnergy)} kcal net",
+                        style = textStyle,
+                        modifier = modifier
                     )
-                    // Optionally show active if total isn't available
-                    activeCalories != null -> Text(
-                        text = "${String.format("%.0f", activeCalories)} kcal (Active)",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 8.dp)
-                    )
+                }
+                else -> {
+                    // Fallback if net energy can't be calculated yet but not loading/error
+                    // (e.g., only food or only burned data is available)
+                    Text("Calculating...", style = textStyle, modifier = modifier)
                 }
             }
         },
+
+        // --- DEFAULT CONTENT: CLEVER ONE-SENTENCE OVERVIEW ---
         defaultContent = {
-            // This content is shown when collapsed OR if expanded and hideDefaultWhenExpanded = false.
-            if (isLoading) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 16.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Loading energy data...", style = MaterialTheme.typography.bodyMedium)
-                }
-            } else if (totalEnergyBurned != null || bmrCalories != null || activeCalories != null) {
-                Column(modifier = Modifier.padding(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 8.dp)) {
-                    EnergyDataRow("Total Burned:", totalEnergyBurned)
-                    EnergyDataRow("Basal (BMR):", bmrCalories) // Displaying BMR as "Basal"
-                    EnergyDataRow("Active Burned:", activeCalories)
-                }
-            } else if (!errorMessage.isNullOrEmpty() && errorMessage?.contains("Health Connect", ignoreCase = true) != true) {
-                // Show specific error if not a general HC error already shown in FoodScreen
+            // This is visible when collapsed, below titleContent, IF quickGlanceInfo is not used
+            // OR if quickGlanceInfo IS used AND hideDefaultWhenExpanded is false (then this appears below quickGlanceInfo).
+            // **With hideDefaultWhenExpanded = true, this defaultContent effectively becomes the main summary
+            // for the collapsed state if you intend it to be the "one-sentence overview".**
+            // If CollapsibleCard is changed to ONLY show quickGlanceInfo OR defaultContent when collapsed,
+            // then you'd pick one. Assuming it shows both if both provided and hideDefault is false.
+            // For your explicit request (hideDefaultWhenExpanded = true, defaultContent = one sentence),
+            // it means this defaultContent is the content for the collapsed state.
+
+            val textStyle = MaterialTheme.typography.bodySmall
+            val modifier = Modifier.padding(start = 8.dp, end = 8.dp) // Give it some horizontal padding
+            val defaultMessage = "Tap to see detailed energy breakdown."
+
+            if (isOverallLoading) {
+                // Keep defaultContent clean during loading, quickGlanceInfo handles "Loading..."
+                Text("", style = textStyle, modifier = modifier) // Or some very minimal placeholder
+            } else if (displayError != null) {
                 Text(
-                    errorMessage ?: "Could not load energy data.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    "There was an issue fetching all data.",
+                    style = textStyle,
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(all = 8.dp)
+                    modifier = modifier
                 )
-            } else if (!expanded) {
-                // If collapsed and no data yet (and not loading or error), show a placeholder
+            } else if (netEnergy != null) {
+                val net = netEnergy!!
+                val balanceText = when {
+                    net > 250 -> "good surplus" // Adjusted thresholds for "clever" sentence
+                    net > 0 -> "slight surplus"
+                    net < -250 -> "notable deficit"
+                    net < 0 -> "slight deficit"
+                    else -> "perfectly balanced"
+                }
                 Text(
-                    "Tap to view energy details.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(all = 8.dp)
+                    text = "Today, you're running a $balanceText.",
+                    style = textStyle,
+                    modifier = modifier
+                )
+            } else if (foodCaloriesToday != null && totalEnergyBurnedHc == null) {
+                Text(
+                    text = "Tracked $foodCaloriesToday kcal intake. Awaiting energy burn data...",
+                    style = textStyle,
+                    modifier = modifier
+                )
+            } else if (totalEnergyBurnedHc != null && foodCaloriesToday == null) {
+                Text(
+                    text = "Burned ${String.format("%.0f", totalEnergyBurnedHc)} kcal. What did you eat?",
+                    style = textStyle,
+                    modifier = modifier
                 )
             }
+            else {
+                Text(defaultMessage, style = textStyle, modifier = modifier)
+            }
         },
+
+
+        // --- EXPANDABLE CONTENT: ALL THE DETAILED DATA ---
         expandableContent = {
-            // This content appears below defaultContent when expanded (as hideDefaultWhenExpanded = false)
-            // You can add more detailed information here, like charts or explanations.
-            if (bmrCalories != null && (healthConnectViewModel.latestWeight == null /* or other profile data is missing */)) {
-                Text(
-                    "BMR is calculated using stored or default user profile data. Ensure your profile (weight, height, age, gender) is up to date for accuracy.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+            // This Column contains everything for the expanded view.
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (isOverallLoading) { // Separate loading state for expanded view if needed for more detail
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp, horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Loading energy details...", style = MaterialTheme.typography.bodyLarge)
+                    }
+                } else if (displayError != null) { // More detailed error for expanded view
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(all = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ErrorOutline,
+                            contentDescription = "Error",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Data Retrieval Issue",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = displayError,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
+                        // Optionally, add a retry button here
+                    }
+                } else if (totalEnergyBurnedHc != null || foodCaloriesToday != null || netEnergy != null) {
+                    Column(
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        // Section: Energy Intake
+                        Text("🍎 Food Intake", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = 4.dp))
+                        EnergyDataRow(label = "Calories Consumed:", value = foodCaloriesToday?.toDouble(), unit = "kcal")
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Section: Energy Expenditure
+                        Text("🔥 Energy Burned (HC)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = 4.dp))
+                        EnergyDataRow(label = "Total Burned:", value = totalEnergyBurnedHc, unit = "kcal")
+                        EnergyDataRow(label = "  Basal (BMR):", value = bmrCaloriesHc, unit = "kcal", isSubtle = true)
+                        EnergyDataRow(label = "  Active Burned:", value = activeCaloriesHc, unit = "kcal", isSubtle = true)
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Section: Net Balance
+                        Text("⚖️ Net Calorie Balance", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = 4.dp))
+                        EnergyDataRow(
+                            label = "Balance (Food - Burned):", // Clarified label
+                            value = netEnergy,
+                            unit = "kcal",
+                            valueColor = when {
+                                netEnergy == null -> MaterialTheme.colorScheme.onSurface
+                                netEnergy!! > 50 -> Color(0xFF4CAF50)
+                                netEnergy!! < -50 -> Color(0xFFF44336)
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                        netEnergy?.let {
+                            Text(
+                                text = when {
+                                    it > 500 -> "Significant Surplus"
+                                    it > 50 -> "Slight Surplus"
+                                    it < -500 -> "Significant Deficit"
+                                    it < -50 -> "Slight Deficit"
+                                    else -> "Balanced"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+                            )
+                        }
+
+                        if (bmrCaloriesHc != null && (healthConnectViewModel.latestWeight == null)) { // Assuming latestWeight is StateFlow
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            InfoMessage(text = "BMR accuracy depends on your profile. Please keep it updated.")
+                        }
+                        if (foodError != null && displayError != foodError) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            InfoMessage(text = "Food Data Error: $foodError", isError = true)
+                        }
+                    }
+                } else {
+                    Text(
+                        "No energy data available to display.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .padding(all = 16.dp)
+                            .fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
-            // Display general error message if relevant and not already covered.
-            // The main errorMessage from ViewModel is already shown at the top of FoodScreen.
-            // This could be for more specific errors related to this card if needed.
-        },
-        hideDefaultWhenExpanded = false // Set to true if defaultContent should disappear when expanded
+        }
     )
 }
 
 @Composable
-private fun EnergyDataRow(label: String, value: Double?, unit: String = "kcal") {
+fun EnergyDataRow(
+    label: String,
+    value: Double?,
+    unit: String = "kcal",
+    modifier: Modifier = Modifier, // Allow passing custom modifiers
+    labelStyle: TextStyle = MaterialTheme.typography.bodyMedium,
+    valueStyle: TextStyle = MaterialTheme.typography.bodyMedium,
+    valueColor: Color? = null, // Allow overriding the default value color
+    isSubtle: Boolean = false // If true, use onSurfaceVariant for both label and value by default
+) {
+    val currentLabelStyle = if (isSubtle) MaterialTheme.typography.bodySmall else labelStyle
+    val currentValueStyle = if (isSubtle) MaterialTheme.typography.bodySmall else valueStyle
+
+    // Determine the color for the value text
+    val finalValueColor = when {
+        isSubtle -> MaterialTheme.colorScheme.onSurfaceVariant // Subtle items use variant color
+        valueColor != null -> valueColor                         // Explicit color override
+        value != null -> MaterialTheme.colorScheme.primary       // Default for actual values
+        else -> MaterialTheme.colorScheme.onSurfaceVariant     // Default for "N/A"
+    }
+    val finalLabelColor = if (isSubtle) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+
+
     Row(
-        modifier = Modifier
+        modifier = modifier // Apply the passed modifier first
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp), // Then apply internal padding
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(
+            text = label,
+            style = currentLabelStyle,
+            color = finalLabelColor,
+            modifier = Modifier.weight(1f)
+        )
         if (value != null) {
             Text(
                 text = "${String.format("%.0f", value)} $unit",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary // Or adjust as needed
+                style = currentValueStyle,
+                color = finalValueColor
             )
         } else {
             Text(
                 text = "N/A",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = currentValueStyle,
+                color = finalValueColor // N/A also uses the determined value color logic
             )
         }
     }
 }
 
-@Composable
-fun CardItem(card: HealthCard, onToggleVisibility: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Icon(
-            imageVector = Icons.Filled.DragHandle,
-            contentDescription = "Drag to reorder",
-            modifier = Modifier.padding(end = 8.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = card.title,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Checkbox(
-            checked = card.isVisible,
-            onCheckedChange = onToggleVisibility,
-            colors = CheckboxDefaults.colors(
-                checkedColor = MaterialTheme.colorScheme.primary,
-                uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        )
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-fun Modifier.dragAndDrop(
-    lazyListState: androidx.compose.foundation.lazy.LazyListState,
-    items: SnapshotStateList<HealthCard>,
-    index: Int
-) = composed {
-    val scope = rememberCoroutineScope()
-    var isDragging by remember { mutableStateOf(false) }
-    var dragOffset by remember { mutableStateOf(0f) }
-    var itemHeight by remember { mutableStateOf(0f) }
-
-    val density = LocalDensity.current
-
-    this
-        .onGloballyPositioned { coordinates ->
-            if (itemHeight == 0f) {
-                itemHeight = coordinates.size.height.toFloat()
-            }
-        }
-        .graphicsLayer {
-            if (isDragging) {
-                translationY = dragOffset
-                alpha = 0.8f
-                shadowElevation = with(density) { 8.dp.toPx() }
-                scaleX = 1.05f
-                scaleY = 1.05f
-            }
-        }
-        .pointerInput(items.size) {
-            detectDragGesturesAfterLongPress(
-                onDragStart = { _ ->
-                    isDragging = true
-                    dragOffset = 0f
-                },
-                onDragEnd = {
-                    isDragging = false
-                    dragOffset = 0f
-                },
-                onDragCancel = {
-                    isDragging = false
-                    dragOffset = 0f
-                },
-                onDrag = { _, dragAmount ->
-                    if (isDragging) {
-                        dragOffset += dragAmount.y
-
-                        val currentActualIndex = items.indexOfFirst { it.id == items[index].id }
-                        if (currentActualIndex != -1) {
-                            val targetIndex = calculateTargetIndex(
-                                dragOffset,
-                                itemHeight,
-                                currentActualIndex,
-                                items.size
-                            )
-
-                            if (targetIndex != currentActualIndex && targetIndex in 0 until items.size) {
-                                val draggedItem = items[currentActualIndex]
-                                items.removeAt(currentActualIndex)
-                                items.add(targetIndex, draggedItem)
-
-                                dragOffset += (currentActualIndex - targetIndex) * itemHeight
-
-                                Log.d(
-                                    "DragAndDrop",
-                                    "Moved item from $currentActualIndex to $targetIndex"
-                                )
-                            }
-                        }
-                    }
-                }
-            )
-        }
-}
-
-private fun calculateTargetIndex(
-    dragOffset: Float,
-    itemHeight: Float,
-    currentIndex: Int,
-    totalItems: Int
-): Int {
-    val threshold = itemHeight / 2
-
-    return when {
-        dragOffset > threshold -> {
-            (currentIndex + 1).coerceAtMost(totalItems - 1)
-        }
-        dragOffset < -threshold -> {
-            (currentIndex - 1).coerceAtLeast(0)
-        }
-        else -> currentIndex
-    }
-}
-
-
-/**
- * A custom progress bar that visually represents energy levels with a blue-green-red gradient.
- * The bar fills based on `currentEnergy` relative to `minEnergy` and `maxEnergy`,
- * and its color changes from blue (low) to green (optimal) to red (high).
- *
- * @param currentEnergy The current energy value in kcal.
- * @param minEnergy The minimum energy value for the scale (default: 1200 kcal).
- * @param optimalEnergy The optimal energy value for the scale, where the color transitions to green (default: 2200 kcal).
- * @param maxEnergy The maximum energy value for the scale (default: 3000 kcal).
- * @param height The height of the progress bar.
- * @param modifier Modifier to be applied to the top-level Box of the progress bar.
- */
 @Composable
 fun EnergyProgressBar(
     currentEnergy: Long,
@@ -1351,379 +1458,25 @@ fun EnergyProgressBar(
     }
 }
 
-// --- NEW FOOD UI COMPONENTS ---
-
 @Composable
-fun MealSection(
-    mealType: MealType,
-    foodItems: SnapshotStateList<FoodItem>,
-    onAddItem: () -> Unit,
-    onUpdateItem: (FoodItem) -> Unit,
-    onDeleteItem: (FoodItem) -> Unit,
-    groceryDatabaseHelper: GroceryDatabaseHelper
-) {
-    // Determine the emoji based on the MealType
-    val emoji = when (mealType) {
-        MealType.BREAKFAST -> "🍳  Breakfast"
-        MealType.SNACK1 -> "🥜  Morning Snack"
-        MealType.LUNCH -> "🍝  Lunch"
-        MealType.SNACK2 -> "🍏  Afternoon Snack"
-        MealType.DINNER -> "🍲  Dinner"
-        MealType.SNACK3 -> "🍪  Nighly Snack"
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row( // New Row to contain the title and the add button
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = emoji, // Added emoji here!
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Normal), // Less bold
-                modifier = Modifier.weight(1f) // Makes text take up available space
-            )
-            // Show "Add Food Item" button next to the title
-            if (foodItems.isEmpty()) { // Only show "Add Food Item" if the list is empty
-                Button(
-                    onClick = onAddItem,
-                    modifier = Modifier.wrapContentWidth(Alignment.End), // Aligns to the right
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), // Make button smaller
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Food", modifier = Modifier.size(18.dp)) // Smaller icon
-                    Spacer(Modifier.width(4.dp)) // Smaller spacer
-                    Text("Add Food Item", style = MaterialTheme.typography.labelMedium) // Smaller text style
-                }
-            }
-        }
-
-        // List existing food items
-        if (foodItems.isNotEmpty()) {
-            foodItems.forEach { foodItem ->
-                FoodItemInput(
-                    foodItem = foodItem,
-                    onUpdate = onUpdateItem,
-                    onDelete = onDeleteItem,
-                    groceryDatabaseHelper = groceryDatabaseHelper // Pass the helper here!
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            // Show "Add Another Item" button below existing items
-            Button(
-                onClick = onAddItem,
-                modifier = Modifier
-                    .wrapContentWidth(Alignment.Start) // Retain left alignment
-                    .padding(vertical = 4.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Food")
-                Spacer(Modifier.width(8.dp))
-                Text("Add Another Item")
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable
-fun FoodItemInput(
-    foodItem: FoodItem,
-    onUpdate: (FoodItem) -> Unit,
-    onDelete: (FoodItem) -> Unit,
-    groceryDatabaseHelper: GroceryDatabaseHelper // Pass the new helper here
-) {
-    var title by rememberSaveable { mutableStateOf(foodItem.title) }
-    var calories by rememberSaveable { mutableStateOf(foodItem.calories.toString()) }
-    var healthyRating by rememberSaveable { mutableStateOf(foodItem.healthyRating) }
-    var lprFriendlyRating by rememberSaveable { mutableStateOf(foodItem.lprFriendlyRating) }
-
-    // Convert ingredients string to a mutable list of strings for UI display
-    // Make sure to trim whitespace and filter out empty strings
-    val ingredientsList = remember {
-        mutableStateListOf<String>().apply {
-            addAll(foodItem.ingredients.split(",").map { it.trim() }.filter { it.isNotBlank() })
-        }
-    }
-    var currentIngredientInput by rememberSaveable { mutableStateOf("") }
-    val focusManager = LocalFocusManager.current
-
-    // State for search suggestions
-    var showSuggestions by remember { mutableStateOf(false) }
-    val suggestions = remember(currentIngredientInput) {
-        if (currentIngredientInput.isBlank()) {
-            emptyList()
-        } else {
-            groceryDatabaseHelper.searchGroceries(currentIngredientInput)
-        }
-    }
-
-    var isEditing by rememberSaveable { mutableStateOf(foodItem.title == "New Food Item" && foodItem.calories == 0) }
-
-    val applyChanges = {
-        val parsedCalories = calories.toIntOrNull() ?: 0
-        // Convert the ingredients list back to a comma-separated string for saving
-        val updatedIngredientsString = ingredientsList.joinToString(", ") { it.trim() }
-
-        onUpdate(foodItem.copy(
-            title = title,
-            calories = parsedCalories,
-            healthyRating = healthyRating,
-            lprFriendlyRating = lprFriendlyRating,
-            ingredients = updatedIngredientsString
-        ))
-        isEditing = false
-    }
-
-    // Function to add a chip
-    val addIngredientChip: (String) -> Unit = { ingredient ->
-        if (ingredient.isNotBlank() && ingredient !in ingredientsList) {
-            ingredientsList.add(ingredient)
-            currentIngredientInput = "" // Clear input after adding
-            focusManager.clearFocus() // Clear focus after adding
-        }
-    }
-
-    // Function to remove a chip
-    val removeIngredientChip: (String) -> Unit = { ingredient ->
-        ingredientsList.remove(ingredient)
-    }
-
-    Card(
+private fun InfoMessage(text: String, isError: Boolean = false) {
+    Row(
         modifier = Modifier
+            .padding(top = 8.dp, bottom = 4.dp)
             .fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            if (isEditing) {
-                // Editable fields
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Food Name") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = calories,
-                    onValueChange = { newValue ->
-                        calories = newValue.filter { it.isDigit() }
-                    },
-                    label = { Text("Calories") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Healthy Rating: ${(healthyRating * 10).roundToInt()}/10", style = MaterialTheme.typography.bodySmall)
-                Slider(
-                    value = healthyRating,
-                    onValueChange = { healthyRating = it },
-                    steps = 9,
-                    valueRange = 0f..1f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("LPR Friendly Rating: ${(lprFriendlyRating * 10).roundToInt()}/10", style = MaterialTheme.typography.bodySmall)
-                Slider(
-                    value = lprFriendlyRating,
-                    onValueChange = { lprFriendlyRating = it },
-                    steps = 9,
-                    valueRange = 0f..1f,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Ingredient Input with Chip display and Suggestions
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = currentIngredientInput,
-                        onValueChange = {
-                            currentIngredientInput = it
-                            showSuggestions = it.isNotBlank() // Show suggestions if input is not blank
-                        },
-                        label = { Text("Add Ingredients (comma or Enter separated)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                addIngredientChip(currentIngredientInput.trim())
-                                showSuggestions = false // Hide suggestions on Done
-                            }
-                        ),
-                        trailingIcon = {
-                            if (currentIngredientInput.isNotBlank()) {
-                                IconButton(onClick = { currentIngredientInput = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear input")
-                                }
-                            }
-                        }
-                    )
-
-                    // Display search suggestions if applicable
-                    if (showSuggestions && suggestions.isNotEmpty()) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                        ) {
-                            Column {
-                                suggestions.take(5).forEach { grocery -> // Limit to top 5 suggestions
-                                    Text(
-                                        text = grocery.name,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null // No ripple on suggestion click
-                                            ) {
-                                                addIngredientChip(grocery.name)
-                                                showSuggestions =
-                                                    false // Hide suggestions after selection
-                                            }
-                                            .padding(8.dp)
-                                    )
-                                    if (suggestions.indexOf(grocery) < suggestions.size - 1 && suggestions.indexOf(grocery) < 4) {
-                                        Divider()
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Display ingredients as chips
-                    // Display ingredients as chips with close buttons
-                    if (ingredientsList.isNotEmpty()) {
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ingredientsList.forEach { ingredient ->
-                                SuggestionChip(
-                                    // onClick for the chip itself (optional, could make it editable)
-                                    onClick = { /* No specific action for clicking the chip itself for now */ },
-                                    label = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Text(ingredient)
-                                            // THIS IS THE CORRECTED PART: Call removeIngredientChip
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Remove $ingredient",
-                                                modifier = Modifier
-                                                    .size(16.dp)
-                                                    .clickable { // <-- The clickable modifier
-                                                        removeIngredientChip(ingredient) // Call the local function
-                                                    }
-                                            )
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    IconButton(onClick = { onDelete(foodItem) }) {
-                        Icon(Icons.Default.Close, contentDescription = "Delete Food Item")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(onClick = applyChanges) {
-                        Icon(Icons.Default.Done, contentDescription = "Apply Changes")
-                    }
-                }
-            } else {
-                // Display mode (unchanged from your previous code)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(foodItem.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("${foodItem.calories} kcal", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Row {
-                        IconButton(onClick = { isEditing = true }) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit Food Item")
-                        }
-                        IconButton(onClick = { onDelete(foodItem) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete Food Item")
-                        }
-                    }
-                }
-                // Display chips in display mode too
-                if (ingredientsList.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Ingredients:", style = MaterialTheme.typography.bodySmall)
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ingredientsList.forEach { ingredient ->
-                            SuggestionChip(
-                                onClick = { /* No action in display mode */ },
-                                label = { Text(ingredient) }
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Healthy: ", style = MaterialTheme.typography.bodySmall)
-                    repeat(foodItem.healthyRating.times(10).roundToInt()) {
-                        Icon(Icons.Filled.Star, contentDescription = null, tint = Color(0xFFFFA726), modifier = Modifier.size(16.dp))
-                    }
-                    repeat(10 - foodItem.healthyRating.times(10).roundToInt()) {
-                        Icon(Icons.Filled.StarBorder, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("LPR Friendly: ", style = MaterialTheme.typography.bodySmall)
-                    repeat(foodItem.lprFriendlyRating.times(10).roundToInt()) {
-                        Icon(Icons.Filled.Star, contentDescription = null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
-                    }
-                    repeat(10 - foodItem.lprFriendlyRating.times(10).roundToInt()) {
-                        Icon(Icons.Filled.StarBorder, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(16.dp))
-                    }
-                }
-            }
-        }
+        Icon(
+            imageVector = if (isError) Icons.Outlined.ReportProblem else Icons.Outlined.Info,
+            contentDescription = if (isError) "Error" else "Information",
+            tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
-
-// Helper function to format MealType for display
-@Composable
-fun formatMealTypeName(mealType: MealType): String {
-    return when (mealType) {
-        MealType.BREAKFAST -> "Breakfast"
-        MealType.SNACK1 -> "Snack 1"
-        MealType.LUNCH -> "Lunch"
-        MealType.SNACK2 -> "Snack 2"
-        MealType.DINNER -> "Dinner"
-        MealType.SNACK3 -> "Snack 3"
-    }
-}
-
-
-// --- End NEW FOOD UI COMPONENTS ---

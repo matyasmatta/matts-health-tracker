@@ -300,6 +300,138 @@ class MealTrackerHelper(private val context: Context) :
     /**
      * Exports all meal data to a CSV file.
      */
+    fun getTotalFoodCaloriesForDay(dateString: String): Int? { // Changed parameter to String
+        // No need to format dateString again if it's already in the correct DB format.
+        // However, you might want to validate the format for robustness if it's coming from an external source.
+        // For this example, we'll assume it's correctly formatted.
+
+        val db = readableDatabase
+        var cursor: Cursor? = null
+        var totalCalories: Int? = null
+
+        Log.d("MealDB_Sum", "Calculating total calories for day: $dateString")
+
+        try {
+            val query = "SELECT SUM($COLUMN_CALORIES) FROM $TABLE_NAME WHERE $COLUMN_DATE = ?"
+            cursor = db.rawQuery(query, arrayOf(dateString)) // Use dateString directly
+
+            if (cursor.moveToFirst()) {
+                if (!cursor.isNull(0)) {
+                    totalCalories = cursor.getInt(0)
+                    Log.d("MealDB_Sum", "Total calories for $dateString: $totalCalories")
+                } else {
+                    Log.d("MealDB_Sum", "Total calories for $dateString is NULL. Returning 0.")
+                    totalCalories = 0
+                }
+            } else {
+                Log.d("MealDB_Sum", "Cursor was empty for $dateString. No items found.")
+                totalCalories = 0
+            }
+        } catch (e: Exception) {
+            Log.e("MealDB_Sum", "Error calculating total calories for $dateString: ${e.message}", e)
+        } finally {
+            cursor?.close()
+            db.close()
+            Log.d("MealDB_Sum", "Database closed after calculating total calories for $dateString.")
+        }
+        return totalCalories
+    }
+    fun getAverageRatingsOverLastNDays(days: Int): Pair<Double, Double> {
+        val db = readableDatabase
+        val sinceDate = LocalDate.now().minusDays(days.toLong()).format(DB_DATE_FORMATTER)
+        val query = """
+        SELECT AVG($COLUMN_HEALTHY_RATING), AVG($COLUMN_LPR_FRIENDLY_RATING)
+        FROM $TABLE_NAME
+        WHERE $COLUMN_DATE >= ?
+    """.trimIndent()
+
+        db.rawQuery(query, arrayOf(sinceDate)).use { cursor ->
+            return if (cursor.moveToFirst()) {
+                val healthy = cursor.getDouble(0)
+                val lpr = cursor.getDouble(1)
+                Pair(healthy, lpr)
+            } else {
+                Pair(0.0, 0.0)
+            }
+        }
+    }
+
+    fun getAverageCaloriesOverLastNDays(days: Int): Double {
+        val db = readableDatabase
+        val sinceDate = LocalDate.now().minusDays(days.toLong()).format(DB_DATE_FORMATTER)
+        val query = """
+        SELECT AVG(daily_sum) FROM (
+            SELECT $COLUMN_DATE, SUM($COLUMN_CALORIES) as daily_sum
+            FROM $TABLE_NAME
+            WHERE $COLUMN_DATE >= ?
+            GROUP BY $COLUMN_DATE
+        )
+    """.trimIndent()
+
+        db.rawQuery(query, arrayOf(sinceDate)).use { cursor ->
+            return if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                cursor.getDouble(0)
+            } else {
+                0.0
+            }
+        }
+    }
+
+
+    fun getDailyCalorieTotalsOverLastNDays(days: Int): List<Pair<String, Int>> {
+        val db = readableDatabase
+        val sinceDate = LocalDate.now().minusDays(days.toLong()).format(DB_DATE_FORMATTER)
+        val result = mutableListOf<Pair<String, Int>>()
+
+        val query = """
+        SELECT $COLUMN_DATE, SUM($COLUMN_CALORIES)
+        FROM $TABLE_NAME
+        WHERE $COLUMN_DATE >= ?
+        GROUP BY $COLUMN_DATE
+        ORDER BY $COLUMN_DATE ASC
+    """.trimIndent()
+
+        db.rawQuery(query, arrayOf(sinceDate)).use { cursor ->
+            while (cursor.moveToNext()) {
+                val date = cursor.getString(0)
+                val total = cursor.getInt(1)
+                result.add(date to total)
+            }
+        }
+        return result
+    }
+
+    fun getCalorieExtremesOverLastNDays(days: Int): Pair<Pair<String, Int>?, Pair<String, Int>?> {
+        val db = readableDatabase
+        val sinceDate = LocalDate.now().minusDays(days.toLong()).format(DB_DATE_FORMATTER)
+
+        val extremesQuery = """
+        SELECT $COLUMN_DATE, SUM($COLUMN_CALORIES) as total
+        FROM $TABLE_NAME
+        WHERE $COLUMN_DATE >= ?
+        GROUP BY $COLUMN_DATE
+        ORDER BY total DESC
+    """.trimIndent()
+
+        val maxDay: Pair<String, Int>?
+        val minDay: Pair<String, Int>?
+
+        db.rawQuery(extremesQuery, arrayOf(sinceDate)).use { cursor ->
+            if (cursor.moveToFirst()) {
+                maxDay = cursor.getString(0) to cursor.getInt(1)
+            } else {
+                return Pair(null, null)
+            }
+
+            cursor.moveToLast()
+            minDay = cursor.getString(0) to cursor.getInt(1)
+        }
+
+        return Pair(maxDay, minDay)
+    }
+
+
+
     fun exportToCSV() {
         Log.d("CSVExportMeal", "Exporting meal data to CSV started.")
         val db = readableDatabase

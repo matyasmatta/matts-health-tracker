@@ -18,6 +18,7 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.lifecycle.ViewModel
+import com.example.mattshealthtracker.AppGlobals.openedDay
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -116,12 +117,69 @@ class HealthConnectIntegrator(private val context: Context) {
         val endOfDay = startOfDay.plusDays(1).minusNanos(1)
         return TimeRangeFilter.between(startOfDay.toInstant(), endOfDay.toInstant())
     }
+    suspend fun getSleepDurationForDay(openedDay: String): Duration? {
+        val date = runCatching { LocalDate.parse(openedDay) }.getOrNull()
+        if (date == null) {
+            Log.e("HealthConnectIntegrator", "Invalid date format: $openedDay")
+            return null
+        }
+        return getSleepDuration(date)
+    }
 
-    /**
-     * Reads the total sleep duration for a specific day from Health Connect.
-     * @param date The date for which to retrieve sleep data.
-     * @return Total sleep duration as a [Duration], or null if unavailable or permissions are denied.
-     */
+
+    suspend fun getStepsForDay(openedDay: String): Long? {
+        val date = runCatching { LocalDate.parse(openedDay) }.getOrNull()
+        if (date == null) {
+            Log.e("HealthConnectIntegrator", "Invalid date format: $openedDay")
+            return null
+        }
+        return getSteps(date)
+    }
+
+
+    suspend fun getActiveCaloriesBurnedForDay(openedDay: String): Double? {
+        val date = runCatching { LocalDate.parse(openedDay) }.getOrNull()
+        if (date == null) {
+            Log.e("HealthConnectIntegrator", "Invalid date format: $openedDay")
+            return null
+        }
+        return getActiveCaloriesBurned(date)
+    }
+
+    suspend fun getWeightForDay(openedDay: String): Double? {
+        val date = runCatching { LocalDate.parse(openedDay) }.getOrNull()
+        if (date == null) {
+            Log.e("HealthConnectIntegrator", "Invalid date format: $openedDay")
+            return null
+        }
+
+        if (!hasPermissions()) {
+            Log.w("HealthConnectIntegrator", "Attempted to read weight without necessary permissions.")
+            return null
+        }
+
+        return try {
+            val timeRangeFilter = createTimeRangeFilter(date)
+            val request = ReadRecordsRequest(
+                recordType = WeightRecord::class,
+                timeRangeFilter = timeRangeFilter,
+                ascendingOrder = false // most recent first
+            )
+            val response = healthConnectClient?.readRecords(request)
+            val latestWeight = response?.records?.firstOrNull()?.weight?.inKilograms
+
+            Log.d("HealthConnectIntegrator", "Weight for $openedDay: $latestWeight kg")
+            latestWeight
+        } catch (e: Exception) {
+            Log.e("HealthConnectIntegrator", "Error reading weight for $openedDay: ${e.message}", e)
+            null
+        }
+    }
+
+
+
+
+    /*OLD FUNCTIONS*/
     suspend fun getSleepDuration(date: LocalDate): Duration? {
         if (!hasPermissions()) {
             Log.w("HealthConnectIntegrator", "Attempted to read sleep without necessary permissions.")
@@ -286,11 +344,10 @@ class HealthConnectViewModel(context: Context) : ViewModel() {
             permissionsGranted = healthConnectIntegrator.hasPermissions()
             if (permissionsGranted) {
                 // Fetch data for today
-                val today = LocalDate.now()
-                totalSteps = healthConnectIntegrator.getSteps(today)
-                totalSleepDuration = healthConnectIntegrator.getSleepDuration(today)
-                activeCaloriesBurned = healthConnectIntegrator.getActiveCaloriesBurned(today)
-                latestWeight = healthConnectIntegrator.getLatestWeight()
+                totalSteps = healthConnectIntegrator.getStepsForDay(openedDay)
+                totalSleepDuration = healthConnectIntegrator.getSleepDurationForDay(openedDay)
+                activeCaloriesBurned = healthConnectIntegrator.getActiveCaloriesBurnedForDay(openedDay)
+                latestWeight = healthConnectIntegrator.getWeightForDay(openedDay)
 
                 // Example BMR calculation
                 val weight = latestWeight
@@ -318,6 +375,45 @@ class HealthConnectViewModel(context: Context) : ViewModel() {
             isLoading = false
         }
     }
+
+    suspend fun fetchDataForDay(openedDay: String) {
+        isLoading = true
+        errorMessage = null
+        try {
+            permissionsGranted = healthConnectIntegrator.hasPermissions()
+            if (permissionsGranted) {
+                totalSteps = healthConnectIntegrator.getStepsForDay(openedDay)
+                totalSleepDuration = healthConnectIntegrator.getSleepDurationForDay(openedDay)
+                activeCaloriesBurned = healthConnectIntegrator.getActiveCaloriesBurnedForDay(openedDay)
+                latestWeight = healthConnectIntegrator.getWeightForDay(openedDay)
+                    ?: healthConnectIntegrator.getLatestWeight() // fallback
+
+
+                val weight = latestWeight
+                if (weight != null) {
+                    val dummyHeightCm = 183.7 // Replace with real data
+                    val dummyGender = Gender.MALE
+                    val dummyDob = ZonedDateTime.now().minusYears(19)
+                    val age = healthConnectIntegrator.calculateAge(dummyDob)
+                    bmr = healthConnectIntegrator.calculateBMR(weight, dummyHeightCm, age, dummyGender)
+                } else {
+                    bmr = null
+                }
+            } else {
+                latestWeight = null
+                bmr = null
+                totalSteps = null
+                totalSleepDuration = null
+                activeCaloriesBurned = null
+            }
+        } catch (e: Exception) {
+            Log.e("HealthConnectViewModel", "Error fetching data for $openedDay", e)
+            errorMessage = "Error fetching data: ${e.message ?: "Unknown"}"
+        } finally {
+            isLoading = false
+        }
+    }
+
 
     fun requestPermissions(launcher: ActivityResultLauncher<Array<String>>) {
         healthConnectIntegrator.requestPermissions(launcher)
