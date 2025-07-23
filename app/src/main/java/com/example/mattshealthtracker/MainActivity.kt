@@ -1056,205 +1056,569 @@ fun BrowseDataScreen() {
     }
 }
 
+enum class SymptomSource { ORIGINAL_HEALTH_DATA, MISCELLANEOUS_DB }
+
+data class UnifiedSymptomUIItem(
+    val id: String, // e.g., "malaise_original", "headache_misc"
+    val name: String,
+    var currentValue: Float,
+    var isActive: Boolean, // Combined active state for UI purposes
+    val yesterdayValue: Float?,
+    var wasActiveYesterday: Boolean, // If it was active the previous day (for pinning)
+    val source: SymptomSource,
+    // Specific to ORIGINAL_HEALTH_DATA source for easy mapping back
+    val originalSymptomKey: String? = null, // e.g., "malaise", "soreThroat", "lymphadenopathy"
+    // Optional: if different symptoms have different slider characteristics
+    val valueRange: ClosedFloatingPointRange<Float> = 0f..4f,
+    val stepLabels: List<String> = listOf("None", "Very Mild", "Mild", "Moderate", "Severe")
+)
+@Composable
+fun UnifiedSymptomRow(
+    item: UnifiedSymptomUIItem,
+    onValueChange: (newValue: Float) -> Unit,
+    onActiveChange: (isActive: Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    // Optional: if you want to show a visual cue for items that were active yesterday
+    // showWasActiveYesterdayMarker: Boolean = false
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp) // Spacing between rows
+    ) {
+        // Row for Symptom Name and optional marker
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.titleMedium, // Or your preferred style
+                // Optionally change color if not active, though checkbox and disabled slider convey this
+                // color = if (item.isActive) MaterialTheme.colorScheme.onSurface
+                // else MaterialTheme.colorScheme.onSurface.copy(alpha = ContentAlpha.disabled),
+                modifier = Modifier.weight(1f) // Allow name to take available space
+            )
+            // if (showWasActiveYesterdayMarker && item.wasActiveYesterday) {
+            //     Icon(
+            //         imageVector = Icons.Filled.PushPin, // Example Icon
+            //         contentDescription = "Active yesterday",
+            //         tint = MaterialTheme.colorScheme.secondary,
+            //         modifier = Modifier.size(16.dp)
+            //     )
+            // }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Row for Checkbox and Slider
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = item.isActive,
+                onCheckedChange = { newActiveState ->
+                    onActiveChange(newActiveState)
+                }
+            )
+            Spacer(modifier = Modifier.width(8.dp)) // Space between checkbox and slider
+
+            Box(modifier = Modifier.weight(1f)) { // Slider takes remaining space
+                NewSliderInput(
+                    // The 'label' for NewSliderInput is for the value text (e.g., "Mild")
+                    // The main symptom name is handled by the Text composable above.
+                    label = item.name, // Or pass "" if NewSliderInput doesn't need its own title
+                    value = item.currentValue,
+                    valueRange = item.valueRange, // Use from UnifiedSymptomUIItem
+                    steps = item.stepLabels.size - 2, // If steps is 0-based index for N labels
+                    labels = item.stepLabels,     // Use from UnifiedSymptomUIItem
+                    yesterdayValue = item.yesterdayValue,
+                    enabled = item.isActive, // Slider is enabled based on the item's active state
+                    onValueChange = { newValue ->
+                        onValueChange(newValue)
+                    }
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun HealthTrackerScreen(openedDay: String) {
     val context = LocalContext.current
-    val dbHelper = HealthDatabaseHelper(context)
-    val miscellaneousDbHelper = MiscellaneousDatabaseHelper(context)
+    // Assuming your DB helpers are initialized here
+    val dbHelper = remember { HealthDatabaseHelper(context) }
+    val miscellaneousDbHelper = remember { MiscellaneousDatabaseHelper(context) }
+    val coroutineScope = rememberCoroutineScope() // For launching save operations
 
-    // Original HealthData state, loaded from DB
-    var healthDataFromDb by remember(openedDay) { // Renamed for clarity
+    // --- Unified Symptom List for UI ---
+    var unifiedSymptomsUIList by remember(openedDay) { mutableStateOf<List<UnifiedSymptomUIItem>>(emptyList()) }
+    var isLoading by remember(openedDay) { mutableStateOf(true) }
+
+    // --- Data Loaded Directly From DB ---
+    // For the "original" database (HealthData)
+    var healthDataFromDb by remember(openedDay) {
         mutableStateOf(
             HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
         )
     }
+    var yesterdayHealthDataFromDb by remember(openedDay) { mutableStateOf<HealthData?>(null) }
 
-    // UI state for slider values. Initialized from healthDataFromDb, but can be changed by UI.
-    var symptomUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
-    var externalUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
-    var mentalUISliderValues by remember { mutableStateOf(listOf(0f, 0f)) }
-    var sleepUISliderValues by remember { mutableStateOf(listOf(0f, 0f, 0f)) }
-    var notesUI by remember { mutableStateOf("") }
+    // For the "miscellaneous" database (list of TrackerItem)
+    // miscellaneousItemsFromDb will be populated by your MiscellaneousDatabaseHelper.fetchMiscellaneousItems(date)
+    // which you confirmed returns List<TrackerItem>
+    var miscellaneousItemsFromDb by remember(openedDay) { mutableStateOf<List<TrackerItem>>(emptyList()) }
+    var yesterdayMiscellaneousItemsFromDb by remember(openedDay) { mutableStateOf<List<TrackerItem>>(emptyList()) }
 
-    // UI state for "active" status of symptoms. Derived from symptomUISliderValues.
-    // This will be a list of Booleans, true if symptomUISliderValues[i] > 0f
-    var symptomActiveStates by remember { mutableStateOf(listOf(false, false, false)) }
 
-    // --- Labels ---
-    val symptomLabels = listOf("Malaise", "Sore Throat", "Lymphadenopathy")
+    // --- UI States for Non-Symptom Fields (managed separately as before) ---
+    // These will be initialized from healthDataFromDb in the new loading LaunchedEffect
+    var externalUISliderValues by remember(openedDay) { mutableStateOf(listOf(0f, 0f, 0f)) }
+    var mentalUISliderValues by remember(openedDay) { mutableStateOf(listOf(0f, 0f)) }
+    var sleepUISliderValues by remember(openedDay) { mutableStateOf(listOf(0f, 0f, 0f)) }
+    var notesUI by remember(openedDay) { mutableStateOf("") }
+
+    val formatter = remember { DateTimeFormatter.ofPattern("yyyy-MM-dd") }
+
+    // --- Labels for non-symptom sections (kept as they don't change) ---
     val externalLabels = listOf("Exercise Level", "Stress Level", "Illness Impact")
     val mentalLabels = listOf("Depression", "Hopelessness")
     val sleepLabels = listOf("Sleep quality", "Sleep length", "Sleep readiness")
 
-    val scrollState = rememberScrollState()
+    val scrollState = rememberScrollState() // Keep your scroll state
 
-    // --- Yesterday's Data ---
-    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    val yesterdayDate = try {
-        LocalDate.parse(openedDay, formatter).minusDays(1).format(formatter)
-    } catch (e: Exception) { null }
-    var yesterdayHealthData by remember { mutableStateOf<HealthData?>(null) }
-    LaunchedEffect(yesterdayDate) { // Triggered when yesterdayDate string changes
-        yesterdayHealthData = yesterdayDate?.let { dbHelper.fetchHealthDataForDate(it) }
-    }
-    val yesterdaySymptomValues = yesterdayHealthData?.let {
-        listOf(it.malaise, it.soreThroat, it.lymphadenopathy)
-    }
-    // ... other yesterday values ...
+    // --- Definitions for Original Symptoms (used in LaunchedEffect and potentially save logic) ---
+    val originalSymptomKeys = listOf("Malaise", "Sore Throat", "Lymphadenopathy")
 
-
-    // --- Function to Update Database ---
-    fun updateDatabase() {
-        // Values sent to DB are directly from the UI slider states.
-        // If a slider was turned "off" via checkbox, its UI slider value is already 0f.
-        val dataToSave = HealthData(
-            currentDate = openedDay,
-            malaise = symptomUISliderValues[0],
-            soreThroat = symptomUISliderValues[1],
-            lymphadenopathy = symptomUISliderValues[2],
-            exerciseLevel = externalUISliderValues[0], // Assuming no toggles for these yet
-            stressLevel = externalUISliderValues[1],
-            illnessImpact = externalUISliderValues[2],
-            depression = mentalUISliderValues[0],
-            hopelessness = mentalUISliderValues[1],
-            sleepQuality = sleepUISliderValues[0],
-            sleepLength = sleepUISliderValues[1],
-            sleepReadiness = sleepUISliderValues[2],
-            notes = notesUI
-        )
-        dbHelper.insertOrUpdateHealthData(dataToSave)
-        dbHelper.exportToCSV(context) // Consider moving export logic
-    }
-
-    // --- Load Data and Initialize UI States ---
+    // --- Data Loading and Merging ---
     LaunchedEffect(openedDay) {
-        val fetchedData = dbHelper.fetchHealthDataForDate(openedDay)
-            ?: HealthData(openedDay, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
-        healthDataFromDb = fetchedData
+        isLoading = true
+        val today = openedDay
+        val yesterdayDateString: String? = try {
+            LocalDate.parse(today, formatter).minusDays(1).format(formatter)
+        } catch (e: Exception) {
+            null
+        }
 
-        // Initialize UI slider values from fetched data
-        symptomUISliderValues = listOf(fetchedData.malaise, fetchedData.soreThroat, fetchedData.lymphadenopathy)
-        externalUISliderValues = listOf(fetchedData.exerciseLevel, fetchedData.stressLevel, fetchedData.illnessImpact)
-        mentalUISliderValues = listOf(fetchedData.depression, fetchedData.hopelessness)
-        sleepUISliderValues = listOf(fetchedData.sleepQuality, fetchedData.sleepLength, fetchedData.sleepReadiness)
-        notesUI = fetchedData.notes
+        // 1. Fetch Today's Data
+        val fetchedHealthData = dbHelper.fetchHealthDataForDate(today)
+            ?: HealthData(today, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
+        healthDataFromDb = fetchedHealthData // Update state
 
-        // Initialize active states based on the UI slider values
-        // If value is 0, it's considered inactive. Otherwise, active.
-        symptomActiveStates = symptomUISliderValues.map { it > 0f }
+        val fetchedMiscellaneousItems = miscellaneousDbHelper.fetchMiscellaneousItems(today)
+        miscellaneousItemsFromDb = fetchedMiscellaneousItems.ifEmpty { defaultMiscellaneousItems() } // Update state, use defaults if empty
+
+        // 2. Fetch Yesterday's Data
+        yesterdayHealthDataFromDb = yesterdayDateString?.let { dbHelper.fetchHealthDataForDate(it) }
+        yesterdayMiscellaneousItemsFromDb = yesterdayDateString?.let { miscellaneousDbHelper.fetchMiscellaneousItems(it) } ?: emptyList()
+
+        // 3. Initialize Non-Symptom UI States from Today's Fetched HealthData
+        externalUISliderValues = listOf(fetchedHealthData.exerciseLevel, fetchedHealthData.stressLevel, fetchedHealthData.illnessImpact)
+        mentalUISliderValues = listOf(fetchedHealthData.depression, fetchedHealthData.hopelessness)
+        sleepUISliderValues = listOf(fetchedHealthData.sleepQuality, fetchedHealthData.sleepLength, fetchedHealthData.sleepReadiness)
+        notesUI = fetchedHealthData.notes
+
+        // 4. Build Unified Symptoms List
+        val tempUnifiedList = mutableListOf<UnifiedSymptomUIItem>()
+
+        // 4a. Process Original Symptoms (Malaise, Sore Throat, Lymphadenopathy)
+        originalSymptomKeys.forEach { key ->
+            val currentValue = when (key) {
+                "Malaise" -> fetchedHealthData.malaise
+                "Sore Throat" -> fetchedHealthData.soreThroat
+                "Lymphadenopathy" -> fetchedHealthData.lymphadenopathy
+                else -> 0f // Should not happen
+            }
+            val yesterdayValue = when (key) {
+                "Malaise" -> yesterdayHealthDataFromDb?.malaise
+                "Sore Throat" -> yesterdayHealthDataFromDb?.soreThroat
+                "Lymphadenopathy" -> yesterdayHealthDataFromDb?.lymphadenopathy
+                else -> null
+            }
+
+            tempUnifiedList.add(
+                UnifiedSymptomUIItem(
+                    id = "${key.replace(" ", "_").toLowerCase()}_original", // e.g., "malaise_original"
+                    name = key, // "Malaise", "Sore Throat", etc.
+                    currentValue = currentValue,
+                    isActive = currentValue > 0f,
+                    yesterdayValue = yesterdayValue,
+                    wasActiveYesterday = yesterdayValue != null && yesterdayValue > 0f,
+                    source = SymptomSource.ORIGINAL_HEALTH_DATA,
+                    originalSymptomKey = key // Store the original key for saving
+                )
+            )
+        }
+
+        // 4b. Process Miscellaneous Symptoms
+        miscellaneousItemsFromDb.forEach { miscItem ->
+            val yesterdayMiscItem = yesterdayMiscellaneousItemsFromDb.find { it.name == miscItem.name } // Match by name
+
+            tempUnifiedList.add(
+                UnifiedSymptomUIItem(
+                    // Create a somewhat safe ID from the name for misc items
+                    id = "${miscItem.name.replace(" ", "_").toLowerCase()}_misc",
+                    name = miscItem.name,
+                    currentValue = miscItem.value,
+                    isActive = miscItem.isChecked, // Directly from misc item's state
+                    yesterdayValue = yesterdayMiscItem?.value,
+                    wasActiveYesterday = yesterdayMiscItem?.isChecked ?: false, // Directly from yesterday's misc item's state
+                    source = SymptomSource.MISCELLANEOUS_DB,
+                    originalSymptomKey = null // Not applicable
+                    // Potentially add custom valueRange and stepLabels here if misc items can vary
+                )
+            )
+        }
+
+        // 5. Update the main UI list and loading state
+        unifiedSymptomsUIList = tempUnifiedList.sortedWith(
+            compareByDescending<UnifiedSymptomUIItem> { it.wasActiveYesterday }
+                .thenBy { it.name }
+        ) // Pinned items first, then alphabetical
+        isLoading = false
     }
 
-    // --- Effect to Save Data when UI states change ---
-    // Note: We react to symptomUISliderValues directly. symptomActiveStates is derived.
-    LaunchedEffect(
-        symptomUISliderValues, externalUISliderValues, mentalUISliderValues,
-        sleepUISliderValues, notesUI, openedDay
-    ) {
-        // Avoid saving initial default values before data for openedDay is loaded.
-        if (healthDataFromDb.currentDate == openedDay) {
-            updateDatabase()
+    LaunchedEffect(healthDataFromDb, externalUISliderValues, mentalUISliderValues, sleepUISliderValues, notesUI, openedDay) {
+        // Avoid saving during initial load or if openedDay is not yet reflected in healthDataFromDb
+        if (!isLoading && healthDataFromDb.currentDate == openedDay) {
+            // Construct the final HealthData object to save
+            // It uses healthDataFromDb for malaise, soreThroat, lymphadenopathy
+            // and the specific UI states for other fields.
+            val dataToSave = healthDataFromDb.copy(
+                exerciseLevel = externalUISliderValues[0],
+                stressLevel = externalUISliderValues[1],
+                illnessImpact = externalUISliderValues[2],
+                depression = mentalUISliderValues[0],
+                hopelessness = mentalUISliderValues[1],
+                sleepQuality = sleepUISliderValues[0],
+                sleepLength = sleepUISliderValues[1],
+                sleepReadiness = sleepUISliderValues[2],
+                notes = notesUI
+            )
+            Log.d("MainSaveEffect", "Saving HealthData for $openedDay: $dataToSave")
+            dbHelper.insertOrUpdateHealthData(dataToSave)
+            dbHelper.exportToCSV(context) // Optional: Export after any change
         }
     }
 
     var miscellaneousExpanded by rememberSaveable(openedDay) { mutableStateOf(false) }
+    fun saveUpdatedSymptom(updatedItem: UnifiedSymptomUIItem) {
+        coroutineScope.launch { // Use the coroutineScope defined at the top
+            when (updatedItem.source) {
+                SymptomSource.ORIGINAL_HEALTH_DATA -> {
+                    // Update the specific field in healthDataFromDb
+                    // This will trigger the LaunchedEffect below to save the whole HealthData object
+                    val currentHealthData = healthDataFromDb
+                    val newHealthData = currentHealthData.copy(
+                        malaise = if (updatedItem.originalSymptomKey == "Malaise") updatedItem.currentValue else currentHealthData.malaise,
+                        soreThroat = if (updatedItem.originalSymptomKey == "Sore Throat") updatedItem.currentValue else currentHealthData.soreThroat,
+                        lymphadenopathy = if (updatedItem.originalSymptomKey == "Lymphadenopathy") updatedItem.currentValue else currentHealthData.lymphadenopathy
+                        // Other fields (externals, mental, etc.) are taken from currentHealthData
+                        // and will be updated by their own UI state changes triggering the main save effect.
+                    )
+                    healthDataFromDb = newHealthData // Update the state
+                    // The main LaunchedEffect for HealthData will handle the actual DB write
+                }
+                SymptomSource.MISCELLANEOUS_DB -> {
+                    // Convert UnifiedSymptomUIItem back to TrackerItem
+                    val trackerItemToSave = TrackerItem(
+                        name = updatedItem.name, // Assuming name is the key for misc items
+                        value = updatedItem.currentValue,
+                        isChecked = updatedItem.isActive
+                    )
+                    // Update the miscellaneousItemsFromDb list state
+                    val updatedMiscList = miscellaneousItemsFromDb.map {
+                        if (it.name == trackerItemToSave.name) trackerItemToSave else it
+                    }.toMutableList()
+
+                    // If the item wasn't in the list (e.g., a default item that was just activated)
+                    if (updatedMiscList.none { it.name == trackerItemToSave.name}) {
+                        // This case should ideally not happen if defaultMiscellaneousItems includes all potential items
+                        // or if items are only ever modified, not added dynamically via this screen.
+                        // For safety, you could add it:
+                        // updatedMiscList.add(trackerItemToSave)
+                        Log.w("SaveMisc", "Attempted to save a new misc item not in original list: ${trackerItemToSave.name}")
+                    }
+
+                    miscellaneousItemsFromDb = updatedMiscList
+                    miscellaneousDbHelper.insertOrUpdateMiscellaneousItems(openedDay, miscellaneousItemsFromDb) // Save the whole list
+                    miscellaneousDbHelper.exportToCSV() // Optional: Export after change
+                }
+            }
+        }
+    }
+
+    fun handleSymptomUpdate(itemId: String, newValue: Float?, newActiveState: Boolean?) {
+        val updatedList = unifiedSymptomsUIList.map { item ->
+            if (item.id == itemId) {
+                var updatedItem = item.copy() // Start with a copy of the current item
+
+                // Apply changes based on what was passed (newValue or newActiveState)
+                if (newActiveState != null) {
+                    updatedItem = updatedItem.copy(isActive = newActiveState)
+                    if (!newActiveState) {
+                        // If deactivated, always set value to 0
+                        updatedItem = updatedItem.copy(currentValue = 0f)
+                    } else {
+                        // If activated AND current value is 0, set to a default (e.g., 1f)
+                        // This makes the slider visibly active.
+                        if (updatedItem.currentValue == 0f) {
+                            updatedItem = updatedItem.copy(currentValue = 1f)
+                        }
+                    }
+                }
+
+                if (newValue != null) {
+                    updatedItem = updatedItem.copy(currentValue = newValue)
+                    if (newValue == 0f) {
+                        // If slider dragged to 0, deactivate
+                        updatedItem = updatedItem.copy(isActive = false)
+                    } else if (newValue > 0f && !updatedItem.isActive) {
+                        // If slider dragged > 0 and was not active, activate
+                        updatedItem = updatedItem.copy(isActive = true)
+                    }
+                }
+                // TODO 10: Call save function here with updatedItem
+                saveUpdatedSymptom(updatedItem)
+                Log.d("SymptomUpdate", "Updated: ${updatedItem.name}, Active: ${updatedItem.isActive}, Value: ${updatedItem.currentValue}") // For testing
+                updatedItem // Return the modified item
+            } else {
+                item // Return unmodified item
+            }
+        }
+        unifiedSymptomsUIList = updatedList // Update the state list
+    }
 
     // --- Main Layout ---
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(scrollState),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+            .padding(24.dp)
+            .verticalScroll(scrollState), // Ensure scrollState is defined
+        verticalArrangement = Arrangement.spacedBy(5.dp) // Overall spacing for sections
     ) {
-        Text("Symptoms", style = MaterialTheme.typography.titleLarge)
-        SymptomSliderGroup(
-            symptomLabels = symptomLabels,
-            symptomValues = symptomUISliderValues,
-            symptomActiveStates = symptomActiveStates, // Pass the derived active states
-            yesterdayValues = yesterdaySymptomValues,
-            onSymptomValueChange = { index, newValue ->
-                val updatedValues = symptomUISliderValues.toMutableList()
-                updatedValues[index] = newValue
-                symptomUISliderValues = updatedValues
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+        } else {
+            // --- TODO 7: Display Pinned Symptoms ---
+            val pinnedSymptoms = remember(unifiedSymptomsUIList) {
+                unifiedSymptomsUIList.filter { it.wasActiveYesterday }
+            }
 
-                // Also update active state if the value crosses the 0 threshold
-                // This handles the case where user drags slider to 0, which should uncheck the box.
-                val updatedActiveStates = symptomActiveStates.toMutableList()
-                updatedActiveStates[index] = newValue > 0f
-                symptomActiveStates = updatedActiveStates
-            },
-            onSymptomActiveChange = { index, isActive ->
-                val updatedActiveStates = symptomActiveStates.toMutableList()
-                updatedActiveStates[index] = isActive
-                symptomActiveStates = updatedActiveStates
+            if (pinnedSymptoms.isNotEmpty()) {
+                Text("Symptoms", style = MaterialTheme.typography.titleLarge)
+                Spacer(modifier = Modifier.height(2.dp)) // Space between title and first item
 
-                // If checkbox is toggled, update the corresponding slider value
-                val updatedSliderValues = symptomUISliderValues.toMutableList()
-                if (isActive) {
-                    // When checking the box:
-                    // Option 1: Set to a default non-zero value (e.g., 1f or min of range) if it was 0.
-                    // Option 2: Leave it at 0 for user to adjust.
-                    // Let's go with option 1 for clearer "on" state.
-                    if (updatedSliderValues[index] == 0f) {
-                        updatedSliderValues[index] = 1f // Or your preferred default "on" value like valueRange.start if not 0
-                    }
-                } else {
-                    // When unchecking, always set slider value to 0.
-                    updatedSliderValues[index] = 0f
+                pinnedSymptoms.forEach { item ->
+                    UnifiedSymptomRow(
+                        item = item,
+                        onValueChange = { newValue ->
+                            handleSymptomUpdate(item.id, newValue = newValue, newActiveState = null)
+                        },
+                        onActiveChange = { newActiveState ->
+                            handleSymptomUpdate(item.id, newValue = null, newActiveState = newActiveState)
+                        }
+                    )
+                    // No need for an explicit Divider here if UnifiedSymptomRow has padding
                 }
-                symptomUISliderValues = updatedSliderValues
+                Spacer(modifier = Modifier.height(8.dp)) // Space after the pinned symptoms section
             }
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+            // --- End of TODO 7 ---
 
-        ExpandableSection(
-            title = " ✨ Miscellaneous",
-            expanded = miscellaneousExpanded,
-            onExpand = { miscellaneousExpanded = !miscellaneousExpanded },
-            content = {
-                MiscellaneousTrackers(
-                    date = openedDay,
-                    miscellaneousDbHelper = miscellaneousDbHelper
+            // TODO 8: Create and Display "Track Other Symptoms" Expandable Section will go here
+
+            AppUiElements.CollapsibleCard(
+                titleContent = {
+                    Text("📊  Browse All Symptoms", style = MaterialTheme.typography.titleMedium) // Match style if needed
+                },
+                expanded = miscellaneousExpanded,
+                onExpandedChange = { isNowExpanded -> miscellaneousExpanded = isNowExpanded },
+                isExpandable = true, // Explicitly true
+
+                // Option 1: No default content shown when expanded (simplest for this case)
+                defaultContent = { /* Can be an empty composable if nothing to show by default */ },
+                hideDefaultWhenExpanded = true, // Hide the (empty) default content when expanded
+
+                // Option 2: If you wanted defaultContent to show something even when collapsed,
+                // and then be replaced by expandableContent when expanded:
+                // defaultContent = {
+                //    Text("Click to browse all available symptom trackers.") // Example
+                // },
+                // hideDefaultWhenExpanded = true, // Or false if you want default to persist above expandable
+
+                expandableContent = {
+                    Column { // This is the direct content for the expanded state
+                        if (unifiedSymptomsUIList.isEmpty()) {
+                            Text(
+                                "No symptoms configured or loaded.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        } else {
+                            unifiedSymptomsUIList.sortedBy { it.name }.forEach { item ->
+                                UnifiedSymptomRow(
+                                    item = item,
+                                    onValueChange = { newValue ->
+                                        handleSymptomUpdate(item.id, newValue = newValue, newActiveState = null)
+                                    },
+                                    onActiveChange = { newActiveState ->
+                                        handleSymptomUpdate(item.id, newValue = null, newActiveState = newActiveState)
+                                    }
+                                )
+                                // If you need dividers BETWEEN items in this list, add them here:
+                                /*if (item != unifiedSymptomsUIList.last()) { // Avoid divider after the last item
+                                    Divider(modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)) // Example padding
+                                }*/
+                            }
+                        }
+                    }
+                },
+                // Optional: Adjust cardPadding if the default doesn't match your old ExpandableSection's look
+                // cardPadding = PaddingValues(all = 12.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp)) // Space after the expandable section
+
+            // --- Externals Section ---
+            Text("Externals", style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(8.dp))
+            externalLabels.forEachIndexed { index, labelString ->
+                Text(
+                    text = labelString,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
+                val standardValueRange = 0f..4f
+                val standardStepLabels = listOf("None", "Very Low", "Low", "Medium", "High")
+
+                // *** ADDED: Get yesterday's value for this external item ***
+                val yesterdayExtValue = when (index) {
+                    0 -> yesterdayHealthDataFromDb?.exerciseLevel
+                    1 -> yesterdayHealthDataFromDb?.stressLevel
+                    2 -> yesterdayHealthDataFromDb?.illnessImpact
+                    else -> null
+                }
+
+                NewSliderInput(
+                    label = "",
+                    value = externalUISliderValues[index],
+                    valueRange = standardValueRange,
+                    steps = standardStepLabels.size - 2,
+                    labels = standardStepLabels,
+                    // *** ADDED: Pass yesterday's value ***
+                    yesterdayValue = yesterdayExtValue,
+                    enabled = true,
+                    onValueChange = { newValue ->
+                        val newList = externalUISliderValues.toMutableList()
+                        newList[index] = newValue
+                        externalUISliderValues = newList
+                    }
+                )
+                if (index < externalLabels.size - 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Text("Externals", style = MaterialTheme.typography.titleLarge)
-        ExternalSliderGroup( // Apply similar pattern if you want toggles here
-            items = externalLabels.zip(externalUISliderValues),
-            yesterdayValues = yesterdayHealthData?.let { listOf(it.exerciseLevel, it.stressLevel, it.illnessImpact) },
-            onValuesChange = { updatedValues -> externalUISliderValues = updatedValues }
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+            // --- Mental Health Section ---
+            Text("Mental Health", style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(8.dp))
+            mentalLabels.forEachIndexed { index, labelString ->
+                Text(
+                    text = labelString,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+                val standardValueRange = 0f..4f
+                val standardStepLabels = listOf("None", "Very Low", "Low", "Moderate", "Severe")
 
-        Text("Mental Health", style = MaterialTheme.typography.titleLarge)
-        MentalSliderGroup( // Apply similar pattern if you want toggles here
-            items = mentalLabels.zip(mentalUISliderValues),
-            yesterdayValues = yesterdayHealthData?.let { listOf(it.depression, it.hopelessness) },
-            onValuesChange = { updatedValues -> mentalUISliderValues = updatedValues }
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+                // *** ADDED: Get yesterday's value for this mental health item ***
+                val yesterdayMentalValue = when (index) {
+                    0 -> yesterdayHealthDataFromDb?.depression
+                    1 -> yesterdayHealthDataFromDb?.hopelessness
+                    else -> null
+                }
 
-        Text("Sleep", style = MaterialTheme.typography.titleLarge)
-        SleepSliderGroup( // Apply similar pattern if you want toggles here
-            items = sleepLabels.zip(sleepUISliderValues),
-            yesterdayValues = yesterdayHealthData?.let { listOf(it.sleepQuality, it.sleepLength, it.sleepReadiness) },
-            onValuesChange = { updatedValues -> sleepUISliderValues = updatedValues }
-        )
-        Spacer(modifier = Modifier.height(16.dp))
+                NewSliderInput(
+                    label = "",
+                    value = mentalUISliderValues[index],
+                    valueRange = standardValueRange,
+                    steps = standardStepLabels.size - 2,
+                    labels = standardStepLabels,
+                    // *** ADDED: Pass yesterday's value ***
+                    yesterdayValue = yesterdayMentalValue,
+                    enabled = true,
+                    onValueChange = { newValue ->
+                        val newList = mentalUISliderValues.toMutableList()
+                        newList[index] = newValue
+                        mentalUISliderValues = newList
+                    }
+                )
+                if (index < mentalLabels.size - 1) {
+                    Spacer(modifier = Modifier.height(2.dp)) // Your custom spacing here
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Text("Notes", style = MaterialTheme.typography.titleLarge)
-        TextInputField(
-            text = notesUI,
-            onTextChange = { newText -> notesUI = newText }
-        )
-        Spacer(modifier = Modifier.height(10.dp))
+            // --- Sleep Section ---
+            Text("Sleep", style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(8.dp))
+            sleepLabels.forEachIndexed { index, labelString ->
+                Text(
+                    text = labelString,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp) // Your custom spacing
+                )
+                val valueRange = if (labelString == "Sleep length") 0f..12f else 0f..4f
+                val stepLabelsList = if (labelString == "Sleep length") {
+                    (0..12).map { "$it hrs" }
+                } else {
+                    listOf("Very Poor", "Poor", "Okay", "Good", "Excellent")
+                }
+
+                // *** ADDED: Get yesterday's value for this sleep item ***
+                val yesterdaySleepValue = when (index) {
+                    0 -> yesterdayHealthDataFromDb?.sleepQuality
+                    1 -> yesterdayHealthDataFromDb?.sleepLength
+                    2 -> yesterdayHealthDataFromDb?.sleepReadiness
+                    else -> null
+                }
+
+                NewSliderInput(
+                    label = "",
+                    value = sleepUISliderValues[index],
+                    valueRange = valueRange,
+                    steps = if (labelString == "Sleep length") 12 else stepLabelsList.size - 2,
+                    labels = stepLabelsList,
+                    // *** ADDED: Pass yesterday's value ***
+                    yesterdayValue = yesterdaySleepValue,
+                    enabled = true,
+                    onValueChange = { newValue ->
+                        val newList = sleepUISliderValues.toMutableList()
+                        newList[index] = newValue
+                        sleepUISliderValues = newList
+                    }
+                )
+                if (index < sleepLabels.size - 1) {
+                    // Spacer(modifier = Modifier.height(1.dp)) // Your custom spacing
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp)) // Space AFTER the entire Sleep section
+
+            // --- Notes Section ---
+            Text("Notes", style = MaterialTheme.typography.titleLarge)
+            //Spacer(modifier = Modifier.height(1.dp)) // Space between "Notes" title and TextField
+            OutlinedTextField(
+                value = notesUI,
+                onValueChange = { notesUI = it },
+                label = { Text("Daily Notes") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3
+            )
+            //Spacer(modifier = Modifier.height(16.dp)) // Space after Notes section
+        }
     }
 }
-
-
 @Composable
 fun ExpandableSection(
     title: String,
@@ -1287,79 +1651,6 @@ fun ExpandableSection(
         if (expanded) {
             Divider(modifier = Modifier.padding(vertical = 8.dp))
             content()
-        }
-    }
-}
-
-@Composable
-fun MiscellaneousTrackers(
-    date: String, // Need the date to load/save data
-    miscellaneousDbHelper: MiscellaneousDatabaseHelper
-) {
-    // State to hold the list of tracker items
-    var miscellaneousItems by remember { mutableStateOf(defaultMiscellaneousItems()) }
-
-    // Load initial data when the date or helper changes
-    LaunchedEffect(date, miscellaneousDbHelper) {
-        val fetchedItems = miscellaneousDbHelper.fetchMiscellaneousItems(date)
-        miscellaneousItems = fetchedItems // fetchMiscellaneousItems returns default list if empty
-    }
-
-    // Function to update a specific item in the list and save the whole list
-    fun updateItemAndSave(updatedItem: TrackerItem) {
-        val updatedList = miscellaneousItems.map { item ->
-            if (item.name == updatedItem.name) updatedItem else item
-        }
-        miscellaneousItems = updatedList // Update local state
-        // Trigger a database save for the entire list
-        miscellaneousDbHelper.insertOrUpdateMiscellaneousItems(date, updatedList)
-        miscellaneousDbHelper.exportToCSV() // Export to CSV after save
-    }
-
-    Column(modifier = Modifier.padding(start = 0.dp)) { // Add some leading space
-
-        // Iterate through the list of miscellaneous items to display each tracker
-        miscellaneousItems.forEach { item ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth() // Ensure row takes full width
-            ) {
-                Checkbox(
-                    checked = item.isChecked,
-                    onCheckedChange = { isChecked ->
-                        // Update the isChecked state for this item and save
-                        updateItemAndSave(item.copy(isChecked = isChecked))
-                    }
-                )
-                // The text label for the item
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(0.5f) // Give some weight to the text
-                )
-
-                // Wrap SliderInput related elements to take remaining horizontal space
-                // This Column holds the slider and its value label
-                Column(modifier = Modifier.weight(1f)) { // Give remaining weight to the slider column
-                    // SliderInput expects value, enabled, etc.
-                    // We'll reuse the same label list for all these 0-4 pain/discomfort scales
-                    val painLabels = listOf("None", "Very Mild", "Mild", "Moderate", "Severe")
-                    NewSliderInput(
-                        label = item.name, // Use the item's name as the label (though it's already in the Text)
-                        value = item.value,
-                        valueRange = 0f..4f, // Assuming 0-4 scale for pain/discomfort
-                        steps = 3, // SliderInput uses steps = 0, but labels are based on 0..4 anchors
-                        labels = painLabels, // Use the common pain/discomfort labels
-                        yesterdayValue = null, // Not fetching yesterday's miscellaneous data
-                        enabled = item.isChecked, // *** Enable/disable based on item's checked state ***
-                        onValueChange = { newValue ->
-                            // Update the value for this item and save
-                            updateItemAndSave(item.copy(value = newValue))
-                        }
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp)) // Space between items
         }
     }
 }
