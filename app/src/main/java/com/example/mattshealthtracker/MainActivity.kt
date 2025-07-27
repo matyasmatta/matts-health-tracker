@@ -107,36 +107,95 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    var openedDay by rememberSaveable { mutableStateOf(AppGlobals.currentDay) }
+                    // var openedDay by rememberSaveable { mutableStateOf(AppGlobals.currentDay) } // This seems to be managed within HealthTrackerApp now
                     var signedInAccount by rememberSaveable { mutableStateOf<GoogleSignInAccount?>(null) }
+                    val context = LocalContext.current // Get context once for LaunchedEffect
 
-                    // Function to update signedInAccount
+                    // Function to update signedInAccount state in MainActivity and potentially trigger UI changes
                     val onSignedInAccountChange: (GoogleSignInAccount?) -> Unit = { account ->
                         signedInAccount = account
-                    }
-
-                    LaunchedEffect(Unit) {
-                        signedInAccount = GoogleDriveUtils.getExistingAccount(context = this@MainActivity)
-                        if (signedInAccount != null) {
-                            Log.d("MainActivity", "Existing Google Sign-in found: ${signedInAccount?.email}")
-                            // Automatically trigger backup:
-                            GoogleDriveUtils.exportDataToCSVZip(this@MainActivity, Uri.EMPTY, signedInAccount)
-                        } else {
-                            Log.d("MainActivity", "No existing Google Sign-in found on startup.")
+                        if (account == null) {
+                            // Handle sign-out logic if needed here, e.g., clear user-specific data
+                            Log.d("MainActivity", "User signed out or account became null.")
                         }
                     }
 
+                    LaunchedEffect(Unit) { // Runs once when MainActivity enters the composition
+                        Log.d(
+                            "MainActivity",
+                            "LaunchedEffect started. Checking for existing Google Sign-in."
+                        )
+                        val existingAccount = GoogleDriveUtils.getExistingAccount(context)
+                        signedInAccount = existingAccount // Update the state immediately
+
+                        if (existingAccount != null) {
+                            Log.i(
+                                "MainActivity",
+                                "Existing Google Sign-in found: ${existingAccount.email}"
+                            )
+                            if (AppGlobals.performAutoSync) {
+                                // --- 1. Attempt to Sync from Remote (if newer foreign data exists) ---
+                                // This should happen BEFORE any local database operations or backups if it involves restore
+                                Log.i("MainActivity", "Attempting sync on app launch...")
+                                val syncManager =
+                                    Sync(context) // Create instance of your Sync class
+                                try {
+                                    syncManager.syncOnAppLaunch() // This is a suspend function
+                                    Log.i("MainActivity", "Sync on app launch process completed.")
+                                    // At this point, if a restore happened, the local databases are updated.
+                                } catch (e: Exception) {
+                                    Log.e("MainActivity", "Error during syncOnAppLaunch", e)
+                                    // Optionally show a non-intrusive error to the user or log for analytics
+                                    // Toast.makeText(context, "Sync check failed.", Toast.LENGTH_SHORT).show()
+                                }
+
+                                // --- 2. After potential sync/restore, perform the local backup ---
+                                // This will now back up the potentially updated state.
+                                Log.i(
+                                    "MainActivity",
+                                    "Proceeding with automatic data export/backup to Drive."
+                                )
+                                try {
+                                    // Assuming exportDataToCSVZip is suspend or handles its own threading
+                                    GoogleDriveUtils.exportDataToCSVZip(
+                                        context,
+                                        Uri.EMPTY,
+                                        existingAccount
+                                    )
+                                    Log.i(
+                                        "MainActivity",
+                                        "Automatic data export/backup to Drive initiated."
+                                    )
+                                } catch (e: Exception) {
+                                    Log.e(
+                                        "MainActivity",
+                                        "Error during automatic data export/backup",
+                                        e
+                                    )
+                                }
+                            }
+                        } else {
+                            Log.i(
+                                "MainActivity",
+                                "No existing Google Sign-in found on startup. User needs to sign in for cloud features."
+                            )
+                            // Optionally prompt user to sign in or guide them to the sign-in option
+                        }
+                        // Database initialization (e.g. Room) should happen AFTER this LaunchedEffect
+                        // or be robust enough to handle re-initialization if a restore occurred.
+                    }
+
                     // Call HealthTrackerApp and pass necessary values
+                    // HealthTrackerApp will then use the 'signedInAccount' state
                     HealthTrackerApp(
                         currentSignedInAccount = signedInAccount,
-                        onSignedInAccountChange = onSignedInAccountChange
+                        onSignedInAccountChange = onSignedInAccountChange // Pass the callback to update the account state
                     )
                 }
             }
         }
     }
 }
-
 sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
     object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.MonitorHeart)
     object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.QueryStats)
