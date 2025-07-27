@@ -170,9 +170,9 @@ object GoogleDriveUtils {
                     }
                 }
             }
-            withContext(Dispatchers.Main) {
+            /*withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Data exported to CSV zip successfully!", Toast.LENGTH_LONG).show()
-            }
+            }*/
             Log.d("Export CSV", "Zip file created: $zipFile")
             uploadDataToDrive(context, account, zipFile)
         } catch (e: Exception) {
@@ -212,7 +212,7 @@ object GoogleDriveUtils {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             context,
-                            "Backup completed to Google Drive",
+                            "Full cloud backup completed (Device ID: ${AppGlobals.appDeviceID})",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
