@@ -108,8 +108,9 @@ object GoogleDriveUtils {
         val filesToZip = filesDir?.listFiles()
 
         // Get the current UTC timestamp
+        val deviceId = AppGlobals.appDeviceID
         val timestamp = AppGlobals.getUtcTimestamp()
-        val zipFileName = "mht-backup-$timestamp.zip"
+        val zipFileName = "mht-backup-$timestamp-$deviceId.zip"
 
         if (filesToZip.isNullOrEmpty()) {
             Log.d("Export CSV", "No CSV files found in: ${filesDir?.absolutePath}")
