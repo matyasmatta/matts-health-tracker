@@ -114,6 +114,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.units.calories
+import androidx.lifecycle.ViewModelProvider
 import com.example.mattshealthtracker.AppUiElements.CollapsibleCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -157,37 +158,32 @@ data class FoodItem(
     var ingredients: String = "" // For now, a simple string, later a list or search result
 )
 
-// --- END NEW DATA MODELS ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FoodScreen(openedDay: String) {
     val context = LocalContext.current
     val mealTrackerHelper = remember { MealTrackerHelper(context) }
-    val groceryDatabaseHelper = remember { GroceryDatabaseHelper(context) } // Ensure this is initialized
+    val groceryDatabaseHelper = remember { GroceryDatabaseHelper(context) }
     val coroutineScope = rememberCoroutineScope()
 
     val foodItemsByMeal = remember {
         mutableStateMapOf<MealType, SnapshotStateList<FoodItem>>().apply {
             MealType.entries.forEach { mealType ->
-                put(mealType, mutableStateListOf()) // Initialize with empty lists
+                put(mealType, mutableStateListOf())
             }
         }
     }
 
-    // State for managing dialog visibility for editing cards
     var showEditCardsDialog by rememberSaveable { mutableStateOf(false) }
 
-    // Use a mutableStateListOf to manage card order and visibility
-    // Default visibility and expansion should ideally be loaded from preferences/settings
     val cards = remember {
         mutableStateListOf(
             HealthCard("energy", "🔥 Energy Use Today", true, false),
             HealthCard("trends", "📊 Dietary Trends", false, false),
-            HealthCard("food_input", "🍎 Food", true, true) // Food card initially visible and expanded
+            HealthCard("food_input", "🍎 Food", true, true)
         )
     }
 
-    // State for individual card expansion (map card ID to its expanded state)
     val cardExpandedStates = remember {
         mutableStateMapOf<String, Boolean>().apply {
             cards.forEach { card ->
@@ -195,89 +191,103 @@ fun FoodScreen(openedDay: String) {
             }
         }
     }
-    // Convenience accessors for specific cards if needed frequently, otherwise use the map
-    val foodExpanded = remember {
-        derivedStateOf { cardExpandedStates["food_input"] ?: true }
-    }
-    // Add similar derivedStateOf for energyExpanded and trendsExpanded if you use them directly elsewhere
 
     // Initialize HealthConnectViewModel
     val healthConnectViewModel: HealthConnectViewModel = viewModel(
-        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+        factory = object : ViewModelProvider.Factory {
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
                 if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
                     @Suppress("UNCHECKED_CAST")
+                    // Pass applicationContext to the ViewModel constructor
                     return HealthConnectViewModel(context.applicationContext) as T
                 }
-                throw IllegalArgumentException("Unknown ViewModel class")
+                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
             }
         }
     )
 
     val requestPermissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
-        onResult = { permissionsResult ->
-            val allPermissionsGranted = healthConnectViewModel.permissions.all { permissionString ->
-                permissionsResult[permissionString] == true
+        onResult = { permissionsResultMap ->
+            val allRequiredPermissionsGranted =
+                healthConnectViewModel.permissions.all { permissionString ->
+                    permissionsResultMap[permissionString] == true
             }
 
-            if (allPermissionsGranted) {
-                Log.d("FoodScreen", "All Health Connect permissions granted.")
+            if (allRequiredPermissionsGranted) {
+                Log.d("FoodScreen", "All Health Connect permissions granted via launcher.")
                 healthConnectViewModel.permissionsGranted = true
                 coroutineScope.launch {
-                    healthConnectViewModel.checkPermissionsAndFetchData()
+                    Log.d("FoodScreen", "Permissions granted, fetching data for day: $openedDay")
+                    healthConnectViewModel.fetchDataForDay(openedDay)
                 }
             } else {
-                Log.w("FoodScreen", "Not all Health Connect permissions granted.")
+                Log.w("FoodScreen", "Not all Health Connect permissions granted via launcher.")
                 healthConnectViewModel.permissionsGranted = false
-                // You might want to show a Snackbar or a more persistent message here
                 healthConnectViewModel.errorMessage = "Not all necessary Health Connect permissions were granted. Some features might be unavailable."
             }
         }
     )
 
-    LaunchedEffect(openedDay, mealTrackerHelper) { // Re-run if openedDay or helper changes
+    // LaunchedEffect for loading meal items when openedDay or mealTrackerHelper changes
+    LaunchedEffect(openedDay, mealTrackerHelper) {
         Log.d("FoodScreen", "LaunchedEffect for openedDay: $openedDay. Loading food items.")
         MealType.entries.forEach { mealType ->
-            foodItemsByMeal[mealType]?.clear() // Clear previous day's items
-            coroutineScope.launch { // Launch DB operations in a coroutine
+            foodItemsByMeal[mealType]?.clear()
+            coroutineScope.launch {
                 try {
                     val loadedItems = mealTrackerHelper.fetchFoodItemsForMeal(openedDay, mealType)
                     foodItemsByMeal[mealType]?.addAll(loadedItems)
                     Log.d("FoodScreen", "Loaded ${loadedItems.size} items for $mealType on $openedDay")
                 } catch (e: Exception) {
                     Log.e("FoodScreen", "Error loading food items for $mealType on $openedDay", e)
-                    // Optionally show an error message to the user
                 }
             }
         }
     }
 
-    // Initial check for permissions when the screen is first composed
-    LaunchedEffect(Unit) {
-        // First, check if Health Connect itself is available on the device
-        // healthConnectViewModel.healthConnectAvailable is updated in ViewModel's init
+    // Initial check for Health Connect availability and permissions when the screen is first composed
+    // This will also re-run if healthConnectViewModel.healthConnectAvailable state changes (though unlikely after init)
+    // or if the key `Unit` changes (which it doesn't, so effectively runs once unless FoodScreen is removed and recomposed)
+    LaunchedEffect(key1 = healthConnectViewModel.healthConnectAvailable, key2 = openedDay) {
         if (!healthConnectViewModel.healthConnectAvailable) {
             healthConnectViewModel.errorMessage = "Health Connect App is not available or not installed on this device."
             Log.w("FoodScreen", "Health Connect not available on this device.")
-            // Optionally, guide the user to install Health Connect via openHealthConnectSettings()
-            // if they try to interact with a feature that needs it.
-            // For now, we just set an error message.
-            return@LaunchedEffect // Exit early if HC is not available
+            return@LaunchedEffect
         }
 
-        // If Health Connect is available, then proceed to check/request permissions
-        if (!healthConnectViewModel.permissionsGranted) {
-            // Check if we should show rationale. For simplicity, directly requesting here.
-            // In a real app, you might show a rationale dialog before this.
-            Log.d("FoodScreen", "Health Connect available, permissions not granted. Requesting permissions.")
-            // The permissions array is already prepared in the ViewModel
-            requestPermissionsLauncher.launch(healthConnectViewModel.permissions)
+        // Health Connect is available, now check permissions
+        Log.d(
+            "FoodScreen",
+            "Health Connect is available. Checking permissions status for day: $openedDay."
+        )
+
+        // Check if permissions were already explicitly granted in the ViewModel
+        if (healthConnectViewModel.permissionsGranted) {
+            Log.d(
+                "FoodScreen",
+                "Permissions already marked as granted in ViewModel. Fetching data for $openedDay."
+            )
+            healthConnectViewModel.fetchDataForDay(openedDay) // Fetch data for the current openedDay
         } else {
-            // Permissions are already granted, fetch data
-            Log.d("FoodScreen", "Health Connect available and permissions already granted. Fetching data.")
-            coroutineScope.launch {
-                healthConnectViewModel.checkPermissionsAndFetchData()
+            // Permissions not marked as granted in ViewModel, check with integrator and then request if needed
+            val previouslyGranted = healthConnectViewModel.healthConnectIntegrator.hasPermissions()
+            if (previouslyGranted) {
+                Log.d(
+                    "FoodScreen",
+                    "Permissions previously granted (checked with integrator). Fetching data for $openedDay."
+                )
+                healthConnectViewModel.permissionsGranted = true // Update ViewModel state
+                healthConnectViewModel.fetchDataForDay(openedDay)
+            } else {
+                Log.d("FoodScreen", "Permissions not granted. Requesting permissions.")
+                if (healthConnectViewModel.permissions.isNotEmpty()) {
+                    requestPermissionsLauncher.launch(healthConnectViewModel.permissions)
+                } else {
+                    Log.e("FoodScreen", "Permissions array in ViewModel is empty. Cannot request.")
+                    healthConnectViewModel.errorMessage =
+                        "Could not request Health Connect permissions: configuration error."
+                }
             }
         }
     }
@@ -289,21 +299,20 @@ fun FoodScreen(openedDay: String) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp), // Add padding around the card itself
-                shape = RoundedCornerShape(16.dp) // Softer corners for the dialog
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) { // Padding inside the card
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         "Edit Visible Cards",
                         style = MaterialTheme.typography.headlineSmall,
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
-
                     cards.forEach { card ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 8.dp), // Spacing between items
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -314,13 +323,12 @@ fun FoodScreen(openedDay: String) {
                                     val index = cards.indexOfFirst { it.id == card.id }
                                     if (index != -1) {
                                         cards[index] = card.copy(isVisible = isChecked)
-                                        // Persist this change to SharedPreferences or database
+                                        // TODO: Persist this change to SharedPreferences or database
                                     }
                                 }
                             )
                         }
                     }
-
                     Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = { showEditCardsDialog = false },
@@ -338,26 +346,24 @@ fun FoodScreen(openedDay: String) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp) // Consistent padding
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .verticalScroll(screenScrollState),
-        verticalArrangement = Arrangement.spacedBy(12.dp) // Space between cards
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Optional: Header Row with a button to open "Edit Visible Cards" dialog
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Food Dashboard", // Example Title
+                "Food Dashboard", // Example Title for FoodScreen
                 style = MaterialTheme.typography.titleLarge
             )
             IconButton(onClick = { showEditCardsDialog = true }) {
-                Icon(Icons.Filled.Settings, contentDescription = "Edit Visible Cards") // Using a settings icon
+                Icon(Icons.Filled.Settings, contentDescription = "Edit Visible Cards")
             }
         }
 
-        // Display error message from HealthConnectViewModel if any
         healthConnectViewModel.errorMessage?.let {
             if (it.isNotEmpty()) {
                 Text(
@@ -369,54 +375,48 @@ fun FoodScreen(openedDay: String) {
             }
         }
 
-
-        // --- Render cards based on the `cards` list and their `isVisible` property ---
         cards.forEach { card ->
             if (card.isVisible) {
-                // Get current expanded state, defaulting to card's default if not in map yet
-                // This 'currentExpandedState' IS the Boolean value.
                 val currentExpandedState = cardExpandedStates[card.id] ?: card.defaultExpanded
-
-                // This lambda now correctly matches Function1<Boolean, Unit>
-                // It's called by the child card (e.g., CollapsibleCard) with the new state.
                 val onExpansionChangedByChild = { newExpandedState: Boolean ->
                     cardExpandedStates[card.id] = newExpandedState
+                    // TODO: Persist expansion state if needed
                 }
 
                 when (card.id) {
                     "energy" -> {
                         EnergyCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
+                            expanded = currentExpandedState,
+                            onExpandedChange = onExpansionChangedByChild,
                             healthConnectViewModel = healthConnectViewModel,
-                            openedDay = openedDay,
-                            mealTrackerHelper = mealTrackerHelper
+                            openedDay = openedDay, // Pass the current openedDay
+                            mealTrackerHelper = mealTrackerHelper // Pass mealTrackerHelper
                         )
                     }
                     "trends" -> {
                         TrendsCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild // Pass the correct lambda type
-                            // Pass any necessary data
+                            expanded = currentExpandedState,
+                            onExpandedChange = onExpansionChangedByChild
+                            // Pass any necessary data for TrendsCard
                         )
                     }
                     "food_input" -> {
                         FoodInputCard(
-                            expanded = currentExpandedState, // Pass the Boolean directly
-                            onExpandedChange = onExpansionChangedByChild, // Pass the correct lambda type
+                            expanded = currentExpandedState,
+                            onExpandedChange = onExpansionChangedByChild,
                             mealTrackerHelper = mealTrackerHelper,
                             groceryDatabaseHelper = groceryDatabaseHelper,
                             openedDay = openedDay,
                             foodItemsByMeal = foodItemsByMeal
                         )
                     }
-                    // Add cases for other cards if you have them
                 }
             }
         }
-        Spacer(modifier = Modifier.height(16.dp)) // Extra space at the bottom
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
