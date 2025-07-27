@@ -49,7 +49,7 @@ fun SettingsDialog(
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-    val appPackageName = context.packageName
+    val appPackageName = "com.example\n.mattshealthtracker"
     val appVersion = BuildConfig.VERSION_NAME
     val githubLink = "https://github.com/matyasmatta/matts-health-tracker"
 
@@ -132,6 +132,35 @@ fun SettingsDialog(
         }
     }
 
+    val handleLegacyBackupToggle: (Boolean) -> Unit = { enable ->
+        if (enable) {
+            // User wants to turn ON Legacy Backup
+            if (currentSignedInAccount == null) {
+                // Not signed in, so trigger sign-in flow
+                val signInClient = GoogleSignIn.getClient(
+                    context,
+                    GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestEmail()
+                        .requestScopes(com.google.android.gms.common.api.Scope(com.google.android.gms.common.Scopes.DRIVE_FILE))
+                        .build()
+                )
+                signInLauncher.launch(signInClient.signInIntent)
+            } else {
+                // Already signed in, toggle is now "on" conceptually
+                Toast.makeText(context, "Legacy Backup to Drive is active.", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        } else {
+            // User wants to turn OFF Legacy Backup, so sign out
+            if (currentSignedInAccount != null) {
+                handleSignOut() // Use your existing sign-out handler
+            } else {
+                // Already signed out, toggle is now "off"
+                Toast.makeText(context, "Already signed out.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     // --- Effects ---
     LaunchedEffect(currentSignedInAccount) {
         googleDriveSignInEnabled = currentSignedInAccount != null
@@ -193,6 +222,7 @@ fun SettingsDialog(
                         signInLauncher.launch(signInClient.signInIntent)
                     },
                     performAutoSync = performAutoSync,
+                    onLegacyBackupToggleChange = handleLegacyBackupToggle, // New callback
                     onPerformAutoSyncChange = { enabled ->
                         // This logic remains similar
                         if (enabled && currentSignedInAccount == null) {
@@ -459,17 +489,22 @@ private fun PreferencesSection(
 private fun DataManagementSection(
     context: Context,
     syncManager: Sync,
-    // googleDriveSignInEnabled: Boolean, // This is now implicitly managed by currentSignedInAccount
-    onSignInClick: () -> Unit, // New: To trigger the sign-in flow
+    onSignInClick: () -> Unit, // For the main "Sign in with Google" button
     performAutoSync: Boolean,
     onPerformAutoSyncChange: (Boolean) -> Unit,
     currentSignedInAccount: GoogleSignInAccount?,
-    onSignOutClick: () -> Unit,
-    onManualBackupToDriveClick: () -> Unit, // This is our "Legacy Backup"
+    onSignOutClick: () -> Unit, // For the explicit "Sign Out & Switch Account" button
+    // This new callback will handle the state change of the "Legacy Backup" toggle
+    onLegacyBackupToggleChange: (Boolean) -> Unit,
+    onManualBackupToDriveClick: () -> Unit, // Still needed if you want a separate button for immediate backup
     onRestoreFromFileClick: () -> Unit,
     onExportToDeviceClick: () -> Unit,
     onIconClick: (title: String, message: String) -> Unit
 ) {
+    // Determine if the "Legacy Backup" toggle should appear checked
+    // It's "on" if the user is signed in. The toggle itself will handle sign-out if turned off.
+    val legacyBackupEnabled = currentSignedInAccount != null
+
     Column(modifier = Modifier.fillMaxWidth()) {
 
         // --- Account Management Section ---
@@ -480,31 +515,28 @@ private fun DataManagementSection(
         )
 
         if (currentSignedInAccount == null) {
-            SettingsButton( // Using SettingsButton for a consistent look
-                icon = Icons.Filled.Login, // Or a Google G icon if you have one
+            SettingsButton(
+                icon = Icons.Filled.Login,
                 text = "Sign in with Google",
                 onClick = onSignInClick,
                 enabled = true,
                 onInfoClick = {
                     onIconClick(
                         "Sign in with Google",
-                        "Sign in with your Google Account to enable cloud features like multi-device sync and manual backups to Google Drive.\n\n" +
-                                "You will be prompted to choose an account."
+                        "Sign in to enable cloud features."
                     )
                 }
             )
         } else {
-            // Display User Info (could be its own Composable for better styling)
+            // Display User Info
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // You can use Coil or Glide to load the profile picture asynchronously
-                // For now, a placeholder or just the AccountCircle icon
                 Icon(
-                    imageVector = Icons.Filled.AccountCircle,
+                    imageVector = Icons.Filled.AccountCircle, // Placeholder
                     contentDescription = "User Profile Picture",
                     modifier = Modifier.size(40.dp),
                     tint = MaterialTheme.colorScheme.primary
@@ -517,7 +549,7 @@ private fun DataManagementSection(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = currentSignedInAccount.email ?: "No email available",
+                        text = currentSignedInAccount.email ?: "No email",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -526,61 +558,85 @@ private fun DataManagementSection(
             Spacer(modifier = Modifier.height(4.dp))
             SettingsButton(
                 icon = Icons.Filled.Logout,
-                text = "Sign Out & Switch Account",
-                onClick = onSignOutClick,
+                text = "Sign Out & Switch",
+                onClick = onSignOutClick, // Explicit sign out
                 enabled = true,
                 onInfoClick = {
                     onIconClick(
                         "Sign Out / Switch Account",
-                        "Signs you out of the current Google Account (${currentSignedInAccount.email}).\n\n" +
-                                "To sign in with a different account, use the 'Sign in with Google' button that will appear after signing out."
+                        "Signs you out of ${currentSignedInAccount.email}."
                     )
                 }
             )
         }
 
-        // --- Cloud Features Section (only if signed in) ---
-        if (currentSignedInAccount != null) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-            Text(
-                "Cloud Features",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+        // --- Cloud Features Section ---
+        // This section will now always be visible, but toggles inside depend on sign-in state
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(
+            "Cloud Features",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
 
-            // Legacy Backup (Manual Upload to Drive) - Now a Button
-            SettingsButton(
-                icon = Icons.Filled.Upload, // Changed icon
-                text = "Legacy Backup to Drive",
-                onClick = onManualBackupToDriveClick, // Reuses existing function
-                enabled = true, // Enabled since user is signed in
-                onInfoClick = {
-                    onIconClick(
-                        "Legacy Backup to Drive",
-                        "Manually creates and uploads a complete backup of your current app data to your Google Drive.\n\n" +
-                                "This is useful for creating specific restore points or ensuring your absolute latest data is in the cloud before making significant changes or switching devices."
-                    )
-                }
-            )
+        // Optionally, still have a button for an *immediate* manual backup
+        // This button would only be enabled if legacyBackupEnabled (i.e., signed in)
+        SettingsButton(
+            icon = Icons.Filled.Backup, // Different icon to distinguish from toggle
+            text = "Upload Backup Now",
+            onClick = onManualBackupToDriveClick,
+            enabled = legacyBackupEnabled, // Only if "Legacy Backup to Drive" is ON
+            onInfoClick = {
+                onIconClick(
+                    "Upload Backup Now",
+                    "Immediately creates and uploads a new backup to Google Drive.\n" +
+                            "Requires 'Legacy Backup to Drive' to be 'on'."
+                )
+            }
+        )
 
-            // Multi-device Sync (formerly Automatic Sync)
-            SettingSwitchRow(
-                icon = Icons.Filled.Loop, // Changed icon (or Autorenew if Loop isn't suitable)
-                title = "Multi-device Sync: ${if (performAutoSync) "on" else "off"}", // Lowercase state
-                infoContentDescription = "Multi-device Sync Information",
-                checked = performAutoSync,
-                onCheckedChange = onPerformAutoSyncChange,
-                enabled = true, // Enabled since user is signed in
-                onIconClick = {
-                    onIconClick(
-                        "Multi-device Sync",
-                        "When 'on', the app will automatically attempt to synchronize your data with Google Drive when the app launches.\n\n" +
-                                "This helps keep your data consistent if you use the app on multiple devices.\n" +
-                                "Requires an active internet connection at launch."
-                    )
+        // Legacy Backup to Drive - NOW A TOGGLE
+        SettingSwitchRow(
+            icon = Icons.Filled.Upload,
+            title = "Legacy Backup: ${if (legacyBackupEnabled) "on" else "off"}",
+            infoContentDescription = "Legacy Backup to Drive Information",
+            checked = legacyBackupEnabled, // Checked if signed in
+            onCheckedChange = { wantsToEnable ->
+                onLegacyBackupToggleChange(wantsToEnable) // New handler
+            },
+            enabled = true, // The toggle itself is always enabled to allow turning off (sign out)
+            onIconClick = {
+                val status = if (currentSignedInAccount != null) {
+                    "Currently enabled and signed in as ${currentSignedInAccount.email}.\n\n"
+                } else {
+                    "Currently disabled.\n\n"
                 }
-            )
-        }
+                onIconClick(
+                    "Legacy Backup to Drive",
+                    status + "Enable this to connect to Google Drive for manual backups in a human-legible CSV format. " +
+                            "Turning this 'on' will prompt you to sign in if you aren't already.\n" +
+                            "Turning this 'off' will sign you out of Google Drive for this app."
+                )
+            }
+        )
+
+        // Multi-device Sync
+        SettingSwitchRow(
+            icon = Icons.Filled.Loop,
+            title = "Multi-device Sync: ${if (performAutoSync) "on" else "off"}",
+            infoContentDescription = "Multi-device Sync Information",
+            checked = performAutoSync,
+            onCheckedChange = onPerformAutoSyncChange,
+            enabled = legacyBackupEnabled, // Only enable if "Legacy Backup to Drive" is on (i.e. signed in)
+            onIconClick = {
+                onIconClick(
+                    "Multi-device Sync",
+                    "When 'on', automatically syncs data on app launch.\n" +
+                            "Requires 'Legacy Backup to Drive' to be 'on'."
+                )
+            }
+        )
+
 
         // --- Local Data Operations ---
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
@@ -591,34 +647,31 @@ private fun DataManagementSection(
         )
 
         SettingsButton(
-            icon = Icons.Filled.Download, // Or RestoreFromStorage
+            icon = Icons.Filled.Download,
             text = "Restore Data from File",
-            onClick = onRestoreFromFileClick,
-            enabled = true,
+            onClick = onRestoreFromFileClick, enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Restore Data from File",
-                    "Allows you to select an '.mht' backup file from your device's storage (e.g., Downloads, or a file previously saved from Drive) and restore your app data from it.\n\n" +
-                            "WARNING: This will overwrite your current app data. A redundancy backup of your current data will be attempted before restoring."
+                    "Restores app data from a selected '.mht' backup file.\nWARNING: Overwrites current data."
                 )
             }
         )
 
         SettingsButton(
-            icon = Icons.Filled.SaveAlt, // Or SystemUpdateAlt for export
-            text = "Export Data to Device Storage",
-            onClick = onExportToDeviceClick,
-            enabled = true,
+            icon = Icons.Filled.SaveAlt,
+            text = "Export Data to Device",
+            onClick = onExportToDeviceClick, enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Export Data to Device Storage",
-                    "Manually creates a ZIP backup of your app data and saves it to your device's local storage (you'll choose the location via the system file picker).\n\n" +
-                            "This backup is NOT automatically synced to Google Drive and is for local archival or manual transfer."
+                    "Saves a local ZIP backup of app data to your device."
                 )
             }
         )
     }
 }
+
 
 @Composable
 private fun AppInfoSection(
