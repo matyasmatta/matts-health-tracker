@@ -212,7 +212,7 @@ object GoogleDriveUtils {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(
                             context,
-                            "Full cloud backup completed (Device ID: ${AppGlobals.appDeviceID})",
+                            "Full cloud backup completed \n(Device ID: ${AppGlobals.appDeviceID})",
                             Toast.LENGTH_SHORT
                         ).show()
                     }

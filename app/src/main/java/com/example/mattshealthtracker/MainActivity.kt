@@ -96,6 +96,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.disabled
 import androidx.lifecycle.ViewModelProvider
+import java.time.Duration
 
 
 class MainActivity : ComponentActivity() {
@@ -1177,12 +1178,40 @@ fun HealthTrackerScreen(openedDay: String) {
     // --- Labels for non-symptom sections (kept as they don't change) ---
     val externalLabels = listOf("Exercise Level", "Stress Level", "Illness Impact")
     val mentalLabels = listOf("Depression", "Hopelessness")
-    val sleepLabels = listOf("Sleep quality", "Sleep length", "Sleep readiness")
+    val sleepLabels = listOf("Sleep quality", "Sleep readiness", "Sleep length")
 
     val scrollState = rememberScrollState() // Keep your scroll state
 
     // --- Definitions for Original Symptoms (used in LaunchedEffect and potentially save logic) ---
     val originalSymptomKeys = listOf("Malaise", "Sore Throat", "Lymphadenopathy")
+    var authoritativeSleepDurationHours by remember { mutableStateOf<Float?>(null) }
+    var isLoadingSleepData by remember { mutableStateOf(false) } // To show loading state
+    val healthConnectIntegrator = remember { HealthConnectIntegrator(context.applicationContext) }
+
+    LaunchedEffect(key1 = openedDay) { // Re-fetch if date changes
+        isLoadingSleepData = true
+        Log.d("SleepSectionUI", "Fetching authoritative sleep data via integrator for $openedDay")
+
+        val durationFromResult = healthConnectIntegrator.getSleepDurationForDay(openedDay)
+        val hoursFromResult = durationFromResult?.toMinutes()?.toFloat()?.div(60f)
+        authoritativeSleepDurationHours = hoursFromResult
+        isLoadingSleepData = false
+        Log.d("SleepSectionUI", "Integrator result for $openedDay: $hoursFromResult hours")
+
+        // Update the specific sleepUISliderValues for "Sleep length"
+        // This ensures that when data is saved, it reflects what the integrator provided.
+        val sleepLengthIndex = sleepLabels.indexOf("Sleep length")
+        if (sleepLengthIndex != -1) {
+            val newList = sleepUISliderValues.toMutableList()
+            // Default to 0f if null, and coerce to the slider's valid range (0-12 hours)
+            newList[sleepLengthIndex] = (hoursFromResult ?: 0f).coerceIn(0f, 12f)
+            sleepUISliderValues = newList
+            Log.d(
+                "SleepSectionUI",
+                "Updated sleepUISliderValues[$sleepLengthIndex] to ${newList[sleepLengthIndex]} based on integrator result."
+            )
+        }
+    }
 
     // --- Data Loading and Merging ---
     LaunchedEffect(openedDay) {
@@ -1556,46 +1585,109 @@ fun HealthTrackerScreen(openedDay: String) {
             // --- Sleep Section ---
             Text("Sleep", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.height(8.dp))
-            sleepLabels.forEachIndexed { index, labelString ->
-                Text(
-                    text = labelString,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 2.dp) // Your custom spacing
-                )
-                val valueRange = if (labelString == "Sleep length") 0f..12f else 0f..4f
-                val stepLabelsList = if (labelString == "Sleep length") {
-                    (0..12).map { "$it hrs" }
-                } else {
-                    listOf("Very Poor", "Poor", "Okay", "Good", "Excellent")
-                }
 
-                // *** ADDED: Get yesterday's value for this sleep item ***
-                val yesterdaySleepValue = when (index) {
-                    0 -> yesterdayHealthDataFromDb?.sleepQuality
-                    1 -> yesterdayHealthDataFromDb?.sleepLength
-                    2 -> yesterdayHealthDataFromDb?.sleepReadiness
-                    else -> null
+            if (isLoadingSleepData) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Loading sleep data...")
                 }
-
-                NewSliderInput(
-                    label = "",
-                    value = sleepUISliderValues[index],
-                    valueRange = valueRange,
-                    steps = if (labelString == "Sleep length") 12 else stepLabelsList.size - 2,
-                    labels = stepLabelsList,
-                    // *** ADDED: Pass yesterday's value ***
-                    yesterdayValue = yesterdaySleepValue,
-                    enabled = true,
-                    onValueChange = { newValue ->
-                        val newList = sleepUISliderValues.toMutableList()
-                        newList[index] = newValue
-                        sleepUISliderValues = newList
+            } else {
+                sleepLabels.forEachIndexed { index, labelString ->
+                    // Define Text, valueRange, and stepLabelsList as before
+                    Text(
+                        text = labelString,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                    val valueRange = if (labelString == "Sleep length") 0f..12f else 0f..4f
+                    val stepLabelsList = if (labelString == "Reported value: ") {
+                        (0..12).map { "$it hrs" }
+                    } else {
+                        listOf("Very Poor", "Poor", "Okay", "Good", "Excellent")
                     }
-                )
-                if (index < sleepLabels.size - 1) {
-                    // Spacer(modifier = Modifier.height(1.dp)) // Your custom spacing
+
+                    val isSleepLengthField = labelString == "Sleep length"
+
+                    // *** CORRECTED: Define yesterdaySleepValue INSIDE the loop ***
+                    val yesterdaySleepValue =
+                        when (labelString) { // Switched to labelString for clarity, index also works
+                            "Sleep quality" -> yesterdayHealthDataFromDb?.sleepQuality // Assuming this is 0-4
+                            "Sleep length" -> yesterdayHealthDataFromDb?.sleepLength?.let {
+                                Duration.ofMillis(
+                                    it.toLong()
+                                ).toMinutes().toFloat() / 60f
+                            }
+
+                            "Sleep readiness" -> yesterdayHealthDataFromDb?.sleepReadiness // Assuming this is 0-4
+                            else -> null
+                        }?.coerceIn(
+                            valueRange.start,
+                            valueRange.endInclusive
+                        ) // Coerce AFTER potential conversion
+
+                    if (isSleepLengthField) {
+                        // "Sleep length" is ALWAYS reported.
+                        // Main label for the metric:
+                        // No changes to this Text needed, but ensure labelString is used if you remove the outer Text for sleep length name
+                        // For consistency, if you always have a Text(labelString,...) above,
+                        // this specific one might become redundant or could be more detailed.
+                        // Sticking to your current structure:
+
+
+                        NewSliderInput(
+                            label = "", // External label is the Text above. Internal label (displayedLabelText) won't show when disabled.
+                            value = (authoritativeSleepDurationHours ?: 0f).coerceIn(0f, 12f),
+                            valueRange = valueRange, // 0f..12f
+                            steps = 12, // For 0-12 hour labels
+                            labels = stepLabelsList, // (0..12).map { "$it hrs" }
+                            yesterdayValue = yesterdaySleepValue, // Now correctly defined
+                            enabled = false, // ALWAYS disabled
+                            onValueChange = { } // No-op
+                        )
+                        Text(
+                            text = "Reported value: ${
+                                authoritativeSleepDurationHours?.let {
+                                    "%.1f hrs".format(
+                                        it.coerceIn(0f, 12f)
+                                    )
+                                } ?: "0.0 hrs"
+                            }",
+                            style = MaterialTheme.typography.bodyMedium, // This is okay, but the Text(labelString,...) above it serves as the main title for the item
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    } else {
+                        // Other sleep sliders (Quality, Readiness) ARE editable
+                        // The Text(labelString, ...) above this block already serves as the title.
+                        val currentSliderValue =
+                            sleepUISliderValues.getOrElse(index) { valueRange.start }
+                        NewSliderInput(
+                            label = "", // Internal label (displayedLabelText) WILL show when enabled
+                            value = currentSliderValue,
+                            valueRange = valueRange,
+                            steps = stepLabelsList.size - 2, // e.g., for 5 labels, steps = 3
+                            labels = stepLabelsList,
+                            yesterdayValue = yesterdaySleepValue, // Now correctly defined
+                            enabled = true,
+                            onValueChange = { newValue ->
+                                val newList = sleepUISliderValues.toMutableList()
+                                newList[index] = newValue
+                                sleepUISliderValues = newList
+                            }
+                        )
+                    }
+                    if (index < sleepLabels.size - 1) {
+                        // Spacer(modifier = Modifier.height(1.dp))
+                    }
                 }
             }
+
             Spacer(modifier = Modifier.height(8.dp)) // Space AFTER the entire Sleep section
 
             // --- Notes Section ---

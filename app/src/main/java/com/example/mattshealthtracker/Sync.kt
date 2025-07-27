@@ -661,7 +661,7 @@ class Sync(private val context: Context) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(
                     context,
-                    "Backup uploaded to Google Drive.",
+                    "Full cloud backup completed \n(Device ID: ${AppGlobals.appDeviceID})",
                     Toast.LENGTH_LONG
                 ).show()
             }
