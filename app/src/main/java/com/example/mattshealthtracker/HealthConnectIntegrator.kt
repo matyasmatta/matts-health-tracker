@@ -765,25 +765,31 @@ class HealthConnectViewModel(private val applicationContext: Context) :
             )
 
 
-            // BMR Calculation (remains similar)
-            val weight = latestWeight
-            if (weight != null) {
-                // TODO: Replace dummy data with actual user profile data
-                val userProfile =
-                    UserProfile(Gender.MALE, ZonedDateTime.now().minusYears(30)) // Example
-                val heightCm = 175.0 // Example
+            // In HealthConnectViewModel.kt, inside fetchDataForDay method
 
-                userProfile.dateOfBirth?.let { dob ->
-                    val ageYears = healthConnectIntegrator.calculateAge(dob)
-                    bmr = healthConnectIntegrator.calculateBMR(
-                        weight,
-                        heightCm,
-                        ageYears,
-                        userProfile.gender
-                    )
-                } ?: run { bmr = null }
+// BMR Calculation
+            val weight = latestWeight // This comes from Health Connect or DB
+            val currentUserProfile = AppGlobals.userProfile // <<< GET ACTUAL USER PROFILE
+
+            if (weight != null && currentUserProfile.dateOfBirth != null && currentUserProfile.heightCm != null) {
+                // All necessary data is available
+                val ageYears = healthConnectIntegrator.calculateAge(currentUserProfile.dateOfBirth)
+                bmr = healthConnectIntegrator.calculateBMR(
+                    weight,
+                    currentUserProfile.heightCm, // <<< Use actual height
+                    ageYears,
+                    currentUserProfile.gender   // <<< Use actual gender
+                )
             } else {
-                bmr = null
+                bmr = null // Set BMR to null if any required info is missing
+                Log.d(
+                    "HealthConnectViewModel",
+                    "BMR calculation skipped: Missing weight, DOB, or height."
+                )
+                // Optionally, set an error message or provide guidance to the user
+                // if (currentUserProfile.dateOfBirth == null) errorMessage = "Set Date of Birth for BMR."
+                // else if (currentUserProfile.heightCm == null) errorMessage = "Set Height for BMR."
+                // else if (weight == null) errorMessage = "Weight data needed for BMR."
             }
 
             if (!permissionsGranted && AppGlobals.deviceRole == DeviceRole.PRIMARY) {
