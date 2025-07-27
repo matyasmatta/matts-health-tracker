@@ -376,11 +376,11 @@ private fun UserProfileSettingsSection(
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
 
         InfoRow(
-            icon = Icons.Filled.Person, label = "Gender", value = genderFormatted,
+            icon = Icons.Filled.Person, label = "Sex", value = genderFormatted,
             onIconClick = {
                 onIconClick(
-                    "Gender Information",
-                    "Your biological gender, used for more accurate estimations of Basal Metabolic Rate (BMR) and Total Daily Energy Expenditure (TDEE)."
+                    "Sex Information",
+                    "Your biological sex, used for more accurate estimations of Basal Metabolic Rate (BMR) and Total Daily Energy Expenditure (TDEE)."
                 )
             }
         )
@@ -478,7 +478,7 @@ private fun PreferencesSection(
             onIconClick = {
                 onIconClick(
                     "Device Role",
-                    "Primary Device (Switch ON): Handles all data operations and syncs to Drive.\nSecondary Device (Switch OFF): Primarily for viewing data from a Primary device."
+                    "Primary Device (Switch ON): The Health Connect data provided by this device are used as the single point of truth for all devices using the same sync folder.\nSecondary Device (Switch OFF): Syncing is both ways for all data except Health Connect data, which is fetched from Primary device."
                 )
             }
         )
