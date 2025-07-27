@@ -181,44 +181,31 @@ fun SettingsDialog(
                 DataManagementSection(
                     context = context,
                     syncManager = syncManager,
-                    googleDriveSignInEnabled = googleDriveSignInEnabled,
-                    onGoogleDriveSignInEnabledChange = { enabled ->
-                        // No need to set googleDriveSignInEnabled here,
-                        // it's primarily driven by currentSignedInAccount via LaunchedEffect
-                        if (enabled) {
-                            if (currentSignedInAccount == null) {
-                                // Get the sign-in intent and launch it with the ActivityResultLauncher
-                                val signInClient = GoogleSignIn.getClient(
-                                    context,
-                                    GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                                        .requestEmail()
-                                        .requestScopes(com.google.android.gms.common.api.Scope(com.google.android.gms.common.Scopes.DRIVE_FILE)) // Ensure you have the correct scope
-                                        .build()
-                                )
-                                signInLauncher.launch(signInClient.signInIntent) // Use the launcher here
-                            } else {
-                                Toast.makeText(context, "Already signed in.", Toast.LENGTH_SHORT)
-                                    .show()
-                            }
-                        } else {
-                            // User is toggling it OFF, so sign out
-                            handleSignOut()
-                        }
+                    onSignInClick = { // New: Handle sign-in request
+                        // This logic was previously in onGoogleDriveSignInEnabledChange
+                        val signInClient = GoogleSignIn.getClient(
+                            context,
+                            GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                .requestEmail()
+                                .requestScopes(com.google.android.gms.common.api.Scope(com.google.android.gms.common.Scopes.DRIVE_FILE))
+                                .build()
+                        )
+                        signInLauncher.launch(signInClient.signInIntent)
                     },
                     performAutoSync = performAutoSync,
                     onPerformAutoSyncChange = { enabled ->
+                        // This logic remains similar
                         if (enabled && currentSignedInAccount == null) {
                             Toast.makeText(
                                 context,
-                                "Please sign in to Google Drive to enable automatic sync.",
+                                "This should not happen (auto-sync toggle enabled without sign-in).",
                                 Toast.LENGTH_LONG
                             ).show()
                         } else {
                             AppGlobals.updatePerformAutoSync(context, enabled)
-                            // performAutoSync will be updated by its LaunchedEffect listening to AppGlobals
                             Toast.makeText(
                                 context,
-                                if (enabled) "Automatic sync enabled." else "Automatic sync disabled.",
+                                "Multi-device Sync ${if (enabled) "enabled" else "disabled"}.",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -227,12 +214,16 @@ fun SettingsDialog(
                     onSignOutClick = handleSignOut,
                     onManualBackupToDriveClick = {
                         scope.launch {
-                            syncManager.manualBackupToDrive()
+                            syncManager.manualBackupToDrive() // Toast is handled within
                         }
                     },
                     onRestoreFromFileClick = {
                         restoreFromFileLauncher.launch(
-                            arrayOf("application/zip", "application/octet-stream", "*/*")
+                            arrayOf(
+                                "application/zip",
+                                "application/octet-stream",
+                                "*/*"
+                            )
                         )
                     },
                     onExportToDeviceClick = {
@@ -468,114 +459,161 @@ private fun PreferencesSection(
 private fun DataManagementSection(
     context: Context,
     syncManager: Sync,
-    googleDriveSignInEnabled: Boolean,
-    onGoogleDriveSignInEnabledChange: (Boolean) -> Unit,
+    // googleDriveSignInEnabled: Boolean, // This is now implicitly managed by currentSignedInAccount
+    onSignInClick: () -> Unit, // New: To trigger the sign-in flow
     performAutoSync: Boolean,
     onPerformAutoSyncChange: (Boolean) -> Unit,
     currentSignedInAccount: GoogleSignInAccount?,
-    onSignOutClick: () -> Unit, // Added for the sign out button
-    onManualBackupToDriveClick: () -> Unit,
+    onSignOutClick: () -> Unit,
+    onManualBackupToDriveClick: () -> Unit, // This is our "Legacy Backup"
     onRestoreFromFileClick: () -> Unit,
     onExportToDeviceClick: () -> Unit,
     onIconClick: (title: String, message: String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
+
+        // --- Account Management Section ---
         Text(
-            "Data & Synchronization",
+            "Account Management",
             style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+            modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
         )
 
-        SettingSwitchRow(
-            icon = Icons.Filled.CloudSync,
-            title = if (googleDriveSignInEnabled) "Drive Sync: ON" else "Drive Sync: OFF",
-            infoContentDescription = "Google Drive Synchronization Information",
-            checked = googleDriveSignInEnabled,
-            onCheckedChange = onGoogleDriveSignInEnabledChange, // This will trigger sign-in or sign-out
-            onIconClick = {
-                val accountStatus = if (currentSignedInAccount != null) {
-                    "Currently signed in as: ${currentSignedInAccount.email}.\n\n"
-                } else {
-                    "Not currently signed in.\n\n"
+        if (currentSignedInAccount == null) {
+            SettingsButton( // Using SettingsButton for a consistent look
+                icon = Icons.Filled.Login, // Or a Google G icon if you have one
+                text = "Sign in with Google",
+                onClick = onSignInClick,
+                enabled = true,
+                onInfoClick = {
+                    onIconClick(
+                        "Sign in with Google",
+                        "Sign in with your Google Account to enable cloud features like multi-device sync and manual backups to Google Drive.\n\n" +
+                                "You will be prompted to choose an account."
+                    )
                 }
-                onIconClick(
-                    "Google Drive Synchronization",
-                    accountStatus +
-                            "Enable to sign in with your Google Account for cloud backup and synchronization.\n\n" +
-                            "Toggling this off will sign you out."
-                )
-            }
-        )
-
-        if (currentSignedInAccount != null) {
-            InfoRow(
-                icon = Icons.Filled.AccountCircle,
-                label = "Signed in as",
-                value = currentSignedInAccount.email ?: "Unknown Email"
             )
+        } else {
+            // Display User Info (could be its own Composable for better styling)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // You can use Coil or Glide to load the profile picture asynchronously
+                // For now, a placeholder or just the AccountCircle icon
+                Icon(
+                    imageVector = Icons.Filled.AccountCircle,
+                    contentDescription = "User Profile Picture",
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = currentSignedInAccount.displayName ?: "Google User",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = currentSignedInAccount.email ?: "No email available",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             SettingsButton(
                 icon = Icons.Filled.Logout,
                 text = "Sign Out & Switch Account",
-                onClick = onSignOutClick, // Use the passed lambda
+                onClick = onSignOutClick,
                 enabled = true,
                 onInfoClick = {
                     onIconClick(
                         "Sign Out / Switch Account",
                         "Signs you out of the current Google Account (${currentSignedInAccount.email}).\n\n" +
-                                "To sign in with a different account, toggle 'Drive Sync' back on after signing out. You will then be prompted to choose an account."
+                                "To sign in with a different account, use the 'Sign in with Google' button that will appear after signing out."
                     )
                 }
             )
-            Spacer(modifier = Modifier.height(8.dp))
         }
 
-        SettingSwitchRow(
-            icon = Icons.Filled.Autorenew,
-            title = "Automatic Sync (on app launch)",
-            infoContentDescription = "Automatic Sync Information",
-            checked = performAutoSync,
-            onCheckedChange = onPerformAutoSyncChange,
-            enabled = currentSignedInAccount != null,
-            onIconClick = {
-                onIconClick(
-                    "Automatic Sync (on app launch)",
-                    "If enabled and signed into Google Drive, the app will sync data on launch.\nRequires Google Drive sign-in."
-                )
-            }
+        // --- Cloud Features Section (only if signed in) ---
+        if (currentSignedInAccount != null) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text(
+                "Cloud Features",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // Legacy Backup (Manual Upload to Drive) - Now a Button
+            SettingsButton(
+                icon = Icons.Filled.Upload, // Changed icon
+                text = "Legacy Backup to Drive",
+                onClick = onManualBackupToDriveClick, // Reuses existing function
+                enabled = true, // Enabled since user is signed in
+                onInfoClick = {
+                    onIconClick(
+                        "Legacy Backup to Drive",
+                        "Manually creates and uploads a complete backup of your current app data to your Google Drive.\n\n" +
+                                "This is useful for creating specific restore points or ensuring your absolute latest data is in the cloud before making significant changes or switching devices."
+                    )
+                }
+            )
+
+            // Multi-device Sync (formerly Automatic Sync)
+            SettingSwitchRow(
+                icon = Icons.Filled.Loop, // Changed icon (or Autorenew if Loop isn't suitable)
+                title = "Multi-device Sync: ${if (performAutoSync) "on" else "off"}", // Lowercase state
+                infoContentDescription = "Multi-device Sync Information",
+                checked = performAutoSync,
+                onCheckedChange = onPerformAutoSyncChange,
+                enabled = true, // Enabled since user is signed in
+                onIconClick = {
+                    onIconClick(
+                        "Multi-device Sync",
+                        "When 'on', the app will automatically attempt to synchronize your data with Google Drive when the app launches.\n\n" +
+                                "This helps keep your data consistent if you use the app on multiple devices.\n" +
+                                "Requires an active internet connection at launch."
+                    )
+                }
+            )
+        }
+
+        // --- Local Data Operations ---
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(
+            "Local Data Management",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 12.dp)
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
-
         SettingsButton(
-            icon = Icons.Filled.UploadFile, text = "Upload Data to Drive",
-            onClick = onManualBackupToDriveClick, enabled = currentSignedInAccount != null,
-            onInfoClick = {
-                onIconClick(
-                    "Upload Data to Drive",
-                    "Manually uploads current app data to Google Drive.\nRequires Google Drive sign-in."
-                )
-            }
-        )
-
-        SettingsButton(
-            icon = Icons.Filled.Download, text = "Restore Data from File",
-            onClick = onRestoreFromFileClick, enabled = true,
+            icon = Icons.Filled.Download, // Or RestoreFromStorage
+            text = "Restore Data from File",
+            onClick = onRestoreFromFileClick,
+            enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Restore Data from File",
-                    "Restores app data from a selected '.mht' backup file.\nWARNING: Overwrites current data."
+                    "Allows you to select an '.mht' backup file from your device's storage (e.g., Downloads, or a file previously saved from Drive) and restore your app data from it.\n\n" +
+                            "WARNING: This will overwrite your current app data. A redundancy backup of your current data will be attempted before restoring."
                 )
             }
         )
 
         SettingsButton(
-            icon = Icons.Filled.SaveAlt, text = "Export Data to Device Storage",
-            onClick = onExportToDeviceClick, enabled = true,
+            icon = Icons.Filled.SaveAlt, // Or SystemUpdateAlt for export
+            text = "Export Data to Device Storage",
+            onClick = onExportToDeviceClick,
+            enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Export Data to Device Storage",
-                    "Saves a local ZIP backup of app data to your device."
+                    "Manually creates a ZIP backup of your app data and saves it to your device's local storage (you'll choose the location via the system file picker).\n\n" +
+                            "This backup is NOT automatically synced to Google Drive and is for local archival or manual transfer."
                 )
             }
         )
