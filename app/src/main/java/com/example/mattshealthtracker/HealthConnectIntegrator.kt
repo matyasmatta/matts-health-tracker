@@ -313,7 +313,7 @@ class HealthConnectIntegrator(private val context: Context) {
         }
 
         // PRIMARY Device Logic
-        if (!hasPermissions()) { // This hasPermissions() checks ALL permissions in your set
+        if (!hasPermissions()) {
             Log.w(
                 "HealthConnectIntegrator",
                 "[SLEEP DEBUG] PRIMARY: Attempted to read sleep without HC permissions. Trying DB for $dateIso."
@@ -332,7 +332,8 @@ class HealthConnectIntegrator(private val context: Context) {
         )
 
         return try {
-            val timeRangeFilter = createTimeRangeFilter(date, offsetHours = 6)
+            val timeRangeFilter =
+                createTimeRangeFilter(date, offsetHours = 6) // Keep your offset logic
             Log.d(
                 "HealthConnectIntegrator",
                 "[SLEEP DEBUG] PRIMARY: TimeRangeFilter for $dateIso: ${timeRangeFilter.startTime} to ${timeRangeFilter.endTime}"
@@ -341,16 +342,14 @@ class HealthConnectIntegrator(private val context: Context) {
                 ReadRecordsRequest(SleepSessionRecord::class, timeRangeFilter = timeRangeFilter)
             val sleepSessionsResponse = healthConnectClient?.readRecords(request)
 
-            if (sleepSessionsResponse == null) {
+            if (sleepSessionsResponse == null || sleepSessionsResponse.records.isEmpty()) {
                 Log.w(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: healthConnectClient.readRecords(request) returned null for $dateIso."
+                    "[SLEEP DEBUG] PRIMARY: No sleep records found in HC or client returned null for $dateIso."
                 )
-                // Fallback to DB
+                // Fallback to DB if no records or null response
                 return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
-                    Duration.ofMillis(
-                        it
-                    )
+                    Duration.ofMillis(it)
                 }
             }
 
@@ -359,25 +358,42 @@ class HealthConnectIntegrator(private val context: Context) {
                 "[SLEEP DEBUG] PRIMARY: HC response for $dateIso - Record count: ${sleepSessionsResponse.records.size}"
             )
             sleepSessionsResponse.records.forEachIndexed { index, record ->
+                val sessionDuration = Duration.between(record.startTime, record.endTime)
                 Log.d(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Record $index for $dateIso - Start: ${record.startTime}, End: ${record.endTime}, Title: ${record.title}, Notes: ${record.notes}"
+                    "[SLEEP DEBUG] PRIMARY: Record $index for $dateIso - Start: ${record.startTime}, End: ${record.endTime}, Duration: ${sessionDuration.toMinutes()} min, Title: ${record.title}, Notes: ${record.notes}"
                 )
-                record.stages.forEach { stage ->
-                    Log.d(
-                        "HealthConnectIntegrator",
-                        "[SLEEP DEBUG] PRIMARY: Record $index Stage: ${stage.stage} (${stage.startTime} - ${stage.endTime})"
+                // Optional: Log stages if needed for debugging specific records
+                // record.stages.forEach { stage ->
+                //     Log.d(
+                //         "HealthConnectIntegrator",
+                //         "[SLEEP DEBUG] PRIMARY: Record $index Stage: ${stage.stage} (${stage.startTime} - ${stage.endTime})"
+                //     )
+                // }
+            }
+
+            // Find the single longest sleep session
+            val longestSleepSessionDuration = sleepSessionsResponse.records
+                .map { session -> Duration.between(session.startTime, session.endTime) }
+                .maxOrNull() // Finds the maximum Duration (Duration is Comparable)
+
+            if (longestSleepSessionDuration == null || longestSleepSessionDuration.isZero || longestSleepSessionDuration.isNegative) {
+                Log.w(
+                    "HealthConnectIntegrator",
+                    "[SLEEP DEBUG] PRIMARY: No valid longest sleep session found (null, zero, or negative) for $dateIso. Found ${sleepSessionsResponse.records.size} records. Falling back to DB."
+                )
+                // Fallback to DB if no valid session is found (e.g., all sessions were zero duration or invalid)
+                return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
+                    Duration.ofMillis(
+                        it
                     )
                 }
             }
 
-            val totalDuration = sleepSessionsResponse.records
-                .map { session -> Duration.between(session.startTime, session.endTime) }
-                .fold(Duration.ZERO, Duration::plus)
 
             Log.d(
                 "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: HC calculated total sleep for $dateIso: ${totalDuration?.toMinutes()} minutes. Record count: ${sleepSessionsResponse.records.size}"
+                "[SLEEP DEBUG] PRIMARY: HC calculated LONGEST sleep for $dateIso: ${longestSleepSessionDuration.toMinutes()} minutes. From ${sleepSessionsResponse.records.size} records."
             )
 
             if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
@@ -386,14 +402,15 @@ class HealthConnectIntegrator(private val context: Context) {
                     "HealthConnectIntegrator",
                     "[SLEEP DEBUG] PRIMARY: Existing DB metric for $dateIso before update: $existingMetric"
                 )
+                // Save the duration of the longest session
                 val metricToSave = existingMetric?.copy(
-                    sleepDurationMillis = totalDuration?.toMillis(),
+                    sleepDurationMillis = longestSleepSessionDuration.toMillis(), // Use longest session
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceDeviceId = getMyDeviceId()
                 ) ?: DailyHealthMetric(
                     date = dateIso,
                     steps = null, // Or existingMetric?.steps
-                    sleepDurationMillis = totalDuration?.toMillis(),
+                    sleepDurationMillis = longestSleepSessionDuration.toMillis(), // Use longest session
                     activeCaloriesBurned = null, // Or existingMetric?.activeCaloriesBurned
                     weightKg = null, // Or existingMetric?.weightKg
                     lastUpdatedTimestamp = System.currentTimeMillis(),
@@ -401,11 +418,11 @@ class HealthConnectIntegrator(private val context: Context) {
                 )
                 Log.d(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Metric to save to DB for $dateIso: $metricToSave"
+                    "[SLEEP DEBUG] PRIMARY: Metric to save to DB for $dateIso (longest session): $metricToSave"
                 )
                 dbHelper.insertOrUpdateDailyMetric(metricToSave)
             }
-            totalDuration
+            longestSleepSessionDuration // Return the longest duration
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
@@ -416,6 +433,7 @@ class HealthConnectIntegrator(private val context: Context) {
             dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let { Duration.ofMillis(it) }
         }
     }
+
 
     suspend fun getStepsForDay(openedDayString: String): Long? {
         val date = runCatching { LocalDate.parse(openedDayString) }.getOrNull()
