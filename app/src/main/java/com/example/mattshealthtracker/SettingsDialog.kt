@@ -31,7 +31,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
 
@@ -52,20 +54,19 @@ fun SettingsDialog(
     val githubLink = "https://github.com/matyasmatta/matts-health-tracker"
 
     // --- State Variables ---
-    var googleDriveSignInEnabled by remember { mutableStateOf(currentSignedInAccount != null) } // For the main Drive toggle
+    var googleDriveSignInEnabled by remember { mutableStateOf(currentSignedInAccount != null) }
     var performAutoSync by remember { mutableStateOf(AppGlobals.performAutoSync) }
 
     var showHealthConnectDialog by remember { mutableStateOf(false) }
     var showUserProfileDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val syncManager = remember { Sync(context) } // Instance of your Sync class
+    val syncManager = remember { Sync(context) }
 
     val currentDeviceRole by rememberUpdatedState(AppGlobals.deviceRole)
     val currentEnergyUnit by rememberUpdatedState(AppGlobals.energyUnitPreference)
     val currentUserProfile by rememberUpdatedState(AppGlobals.userProfile)
     val currentAppDeviceID by rememberUpdatedState(AppGlobals.appDeviceID)
 
-    // State for the generic information dialog
     var showInformationDialog by remember { mutableStateOf(false) }
     var currentDialogInfo by remember { mutableStateOf<DialogInfo?>(null) }
 
@@ -76,8 +77,8 @@ fun SettingsDialog(
 
     // --- ActivityResultLaunchers ---
     val signInLauncher = GoogleDriveUtils.rememberGoogleSignInLauncher { account ->
-        onSignedInAccountChange(account)
-        googleDriveSignInEnabled = account != null
+        onSignedInAccountChange(account) // This will update currentSignedInAccount
+        // googleDriveSignInEnabled will be updated by the LaunchedEffect below
         Toast.makeText(
             context,
             if (account != null) "Google Sign-in successful: ${account.email}" else "Google Sign-in failed or cancelled.",
@@ -92,8 +93,6 @@ fun SettingsDialog(
             Toast.makeText(context, "Export cancelled.", Toast.LENGTH_SHORT).show()
             return@rememberLauncherForActivityResult
         }
-        // TODO: Implement actual local export using the 'uri' with a utility function
-        // For example, by packaging databases and writing to the uri's OutputStream
         Toast.makeText(
             context,
             "Local export (SAF) needs a dedicated local zip function in Utils for URI.",
@@ -108,10 +107,8 @@ fun SettingsDialog(
         if (uri != null) {
             scope.launch {
                 val success = syncManager.manualRestoreFromLocalMhtFile(uri)
-                // Toast messages are handled within manualRestoreFromLocalMhtFile
                 if (success) {
                     Log.i("SettingsDialog", "Manual restore initiated successfully via settings.")
-                    // Consider if app restart or data refresh is needed and how to signal it
                 }
             }
         } else {
@@ -119,9 +116,28 @@ fun SettingsDialog(
         }
     }
 
+    // --- Sign Out Handler ---
+    val handleSignOut: () -> Unit = {
+        GoogleDriveUtils.signOut(context) { success ->
+            if (success) {
+                onSignedInAccountChange(null)
+                AppGlobals.updatePerformAutoSync(context, false)
+                Toast.makeText(context, "Signed out successfully.", Toast.LENGTH_SHORT).show()
+                Log.d("SettingsDialog", "Sign out successful, UI will update via LaunchedEffects.")
+            } else {
+                Toast.makeText(context, "Sign out failed. Please try again.", Toast.LENGTH_SHORT)
+                    .show()
+                Log.e("SettingsDialog", "Sign out failed from GoogleDriveUtils callback.")
+            }
+        }
+    }
+
     // --- Effects ---
     LaunchedEffect(currentSignedInAccount) {
         googleDriveSignInEnabled = currentSignedInAccount != null
+        if (currentSignedInAccount == null) {
+            AppGlobals.updatePerformAutoSync(context, false) // Also turn off auto-sync
+        }
     }
 
     LaunchedEffect(AppGlobals.performAutoSync) {
@@ -138,6 +154,7 @@ fun SettingsDialog(
                     .padding(horizontal = 24.dp, vertical = 20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
+                // ... (Title, UserProfileSettingsSection, PreferencesSection) ...
                 Text(
                     "Settings",
                     style = MaterialTheme.typography.headlineSmall,
@@ -161,39 +178,31 @@ fun SettingsDialog(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-                // Updated DataManagementSection
                 DataManagementSection(
                     context = context,
-                    syncManager = syncManager, // Pass SyncManager
+                    syncManager = syncManager,
                     googleDriveSignInEnabled = googleDriveSignInEnabled,
                     onGoogleDriveSignInEnabledChange = { enabled ->
-                        googleDriveSignInEnabled = enabled
+                        // No need to set googleDriveSignInEnabled here,
+                        // it's primarily driven by currentSignedInAccount via LaunchedEffect
                         if (enabled) {
                             if (currentSignedInAccount == null) {
-                                scope.launch {
-                                    GoogleDriveUtils.signInToGoogleDrive(context, signInLauncher)
-                                }
-                            } else {
-                                Toast.makeText(
+                                // Get the sign-in intent and launch it with the ActivityResultLauncher
+                                val signInClient = GoogleSignIn.getClient(
                                     context,
-                                    "Google Drive features enabled.",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                    GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                        .requestEmail()
+                                        .requestScopes(com.google.android.gms.common.api.Scope(com.google.android.gms.common.Scopes.DRIVE_FILE)) // Ensure you have the correct scope
+                                        .build()
+                                )
+                                signInLauncher.launch(signInClient.signInIntent) // Use the launcher here
+                            } else {
+                                Toast.makeText(context, "Already signed in.", Toast.LENGTH_SHORT)
+                                    .show()
                             }
                         } else {
-                            // Optionally confirm sign out, for now just a toast
-                            // Also, if they disable Google Drive sign-in, should auto-sync be disabled too?
-                            AppGlobals.updatePerformAutoSync(
-                                context,
-                                false
-                            ) // Disable auto-sync if Drive is disabled
-                            performAutoSync = false
-                            Toast.makeText(
-                                context,
-                                "Google Drive features disabled. Auto-sync also disabled.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            // Note: Signing out explicitly would be: GoogleDriveUtils.signOut(context) { onSignedInAccountChange(null) }
+                            // User is toggling it OFF, so sign out
+                            handleSignOut()
                         }
                     },
                     performAutoSync = performAutoSync,
@@ -204,12 +213,9 @@ fun SettingsDialog(
                                 "Please sign in to Google Drive to enable automatic sync.",
                                 Toast.LENGTH_LONG
                             ).show()
-                            // Optionally trigger sign-in:
-                            // scope.launch { GoogleDriveUtils.signInToGoogleDrive(context, signInLauncher) }
                         } else {
                             AppGlobals.updatePerformAutoSync(context, enabled)
-                            performAutoSync =
-                                enabled // Update local state for immediate UI reflection
+                            // performAutoSync will be updated by its LaunchedEffect listening to AppGlobals
                             Toast.makeText(
                                 context,
                                 if (enabled) "Automatic sync enabled." else "Automatic sync disabled.",
@@ -218,20 +224,15 @@ fun SettingsDialog(
                         }
                     },
                     currentSignedInAccount = currentSignedInAccount,
+                    onSignOutClick = handleSignOut,
                     onManualBackupToDriveClick = {
                         scope.launch {
                             syncManager.manualBackupToDrive()
-                            // Toasts are handled within manualBackupToDrive
                         }
                     },
                     onRestoreFromFileClick = {
-                        // Ensure MIME types cover .mht (which are zip files)
                         restoreFromFileLauncher.launch(
-                            arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "*/*"
-                            )
+                            arrayOf("application/zip", "application/octet-stream", "*/*")
                         )
                     },
                     onExportToDeviceClick = {
@@ -242,10 +243,9 @@ fun SettingsDialog(
                     onIconClick = displayInfoDialog
                 )
 
-
+                // ... (Rest of your Dialog content: Health Connect, AppInfoSection, Close button, etc.) ...
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-                // Health Connect Button
                 Button(
                     onClick = { showHealthConnectDialog = true },
                     modifier = Modifier
@@ -254,12 +254,12 @@ fun SettingsDialog(
                 ) {
                     Icon(
                         Icons.Filled.Link,
-                        contentDescription = null, // Content description for Button text itself is enough
+                        contentDescription = null,
                         modifier = Modifier.size(ButtonDefaults.IconSize)
                     )
                     Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                     Text("Health Connect Demo")
-                    Spacer(Modifier.weight(1f)) // Push info icon to the end
+                    Spacer(Modifier.weight(1f))
                     Icon(
                         Icons.Filled.Info,
                         contentDescription = "Health Connect Information",
@@ -308,13 +308,13 @@ fun SettingsDialog(
         }
     }
 
+    // ... (UserProfileDialog, InformationDialog, HealthConnectDialog) ...
     if (showUserProfileDialog) {
         UserProfileDialog(
             currentUserProfile = currentUserProfile,
             onDismissRequest = { showUserProfileDialog = false },
             onUserProfileUpdate = { updatedProfile ->
                 AppGlobals.updateUserProfile(context, updatedProfile)
-                showUserProfileDialog = false // Handled in UserProfileDialog's onDismiss
                 Toast.makeText(context, "Profile updated", Toast.LENGTH_SHORT).show()
             }
         )
@@ -334,7 +334,6 @@ fun SettingsDialog(
 }
 
 // --- Section Composables ---
-// UserProfileSettingsSection and PreferencesSection remain the same from your previous code.
 
 @Composable
 private fun UserProfileSettingsSection(
@@ -349,21 +348,14 @@ private fun UserProfileSettingsSection(
             modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
         )
         val dobFormatted = currentUserProfile.dateOfBirth?.format(
-            DateTimeFormatter.ofPattern(
-                "dd/MM/yyyy",
-                java.util.Locale.getDefault() // Use default locale or specify as needed
-            )
+            DateTimeFormatter.ofPattern("dd/MM/yyyy", java.util.Locale.getDefault())
         ) ?: "Not set"
-        val heightFormatted = currentUserProfile.heightCm?.let { "%.0f cm".format(it) }
-            ?: "Not set" // Format to no decimal places
+        val heightFormatted = currentUserProfile.heightCm?.let { "%.0f cm".format(it) } ?: "Not set"
         val genderFormatted = currentUserProfile.gender.name.replace("_", " ").lowercase()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
 
-
         InfoRow(
-            icon = Icons.Filled.Person,
-            label = "Gender",
-            value = genderFormatted,
+            icon = Icons.Filled.Person, label = "Gender", value = genderFormatted,
             onIconClick = {
                 onIconClick(
                     "Gender Information",
@@ -372,9 +364,7 @@ private fun UserProfileSettingsSection(
             }
         )
         InfoRow(
-            icon = Icons.Filled.Cake,
-            label = "Date of Birth",
-            value = dobFormatted,
+            icon = Icons.Filled.Cake, label = "Date of Birth", value = dobFormatted,
             onIconClick = {
                 onIconClick(
                     "Date of Birth Information",
@@ -383,9 +373,7 @@ private fun UserProfileSettingsSection(
             }
         )
         InfoRow(
-            icon = Icons.Filled.Height,
-            label = "Height",
-            value = heightFormatted,
+            icon = Icons.Filled.Height, label = "Height", value = heightFormatted,
             onIconClick = {
                 onIconClick(
                     "Height Information",
@@ -398,7 +386,7 @@ private fun UserProfileSettingsSection(
         Button(onClick = onEditProfileClick, modifier = Modifier.fillMaxWidth()) {
             Icon(
                 Icons.Filled.Edit,
-                contentDescription = null, // Button text is descriptive
+                contentDescription = null,
                 modifier = Modifier.size(ButtonDefaults.IconSize)
             )
             Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -406,7 +394,6 @@ private fun UserProfileSettingsSection(
         }
     }
 }
-
 
 @Composable
 private fun PreferencesSection(
@@ -421,37 +408,32 @@ private fun PreferencesSection(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
         )
-
         val formattedEnergyUnitName = when (currentEnergyUnit) {
-            EnergyUnit.KCAL -> "kcal"
-            EnergyUnit.KJ -> "kJ"
+            EnergyUnit.KCAL -> "kcal"; EnergyUnit.KJ -> "kJ"
         }
 
-        // Energy Unit Row
         SettingSwitchRow(
             icon = Icons.Filled.LocalFireDepartment,
             title = "Energy Unit: $formattedEnergyUnitName",
             infoContentDescription = "Energy Unit Information",
-            checked = currentEnergyUnit == EnergyUnit.KJ, // True if KJ is selected
+            checked = currentEnergyUnit == EnergyUnit.KJ,
             onCheckedChange = { isChecked ->
                 val newUnit = if (isChecked) EnergyUnit.KJ else EnergyUnit.KCAL
                 AppGlobals.updateEnergyUnit(context, newUnit)
-                val toastUnitName = if (newUnit == EnergyUnit.KJ) "kJ" else "kcal"
-                Toast.makeText(context, "Energy unit set to $toastUnitName", Toast.LENGTH_SHORT)
-                    .show()
+                Toast.makeText(
+                    context,
+                    "Energy unit set to ${if (newUnit == EnergyUnit.KJ) "kJ" else "kcal"}",
+                    Toast.LENGTH_SHORT
+                ).show()
             },
             onIconClick = {
                 onIconClick(
                     "Energy Unit",
-                    "Choose your preferred unit for displaying energy values throughout the application.\n\n" +
-                            "kcal: Kilocalories (often referred to as Calories) are a common unit for food energy.\n\n" +
-                            "kJ: Kilojoules are the standard international (SI) unit of energy. 1 kcal is approximately 4.184 kJ.\n\n" +
-                            "The switch toggles between kcal (off) and kJ (on)."
+                    "Choose your preferred unit for displaying energy values (kcal or kJ).\nThe switch toggles between kcal (off) and kJ (on)."
                 )
             }
         )
 
-        // Device Role Row
         SettingSwitchRow(
             icon = Icons.Filled.Devices,
             title = "Device Role: ${
@@ -459,7 +441,7 @@ private fun PreferencesSection(
                     .replaceFirstChar { it.titlecase(java.util.Locale.getDefault()) }
             }",
             infoContentDescription = "Device Role Information",
-            checked = currentDeviceRole == DeviceRole.PRIMARY, // True if Primary is selected
+            checked = currentDeviceRole == DeviceRole.PRIMARY,
             onCheckedChange = { isChecked ->
                 val newRole = if (isChecked) DeviceRole.PRIMARY else DeviceRole.SECONDARY
                 AppGlobals.updateDeviceRole(context, newRole)
@@ -475,24 +457,23 @@ private fun PreferencesSection(
             onIconClick = {
                 onIconClick(
                     "Device Role",
-                    "Primary Device (Switch ON):\nHandles all data operations and can sync to Google Drive. Health Connect data from this device can be used as a source of truth.\n\n" +
-                            "Secondary Device (Switch OFF):\nPrimarily for viewing data. It receives data from a Primary device via Google Drive sync but typically does not initiate uploads or write to Health Connect."
+                    "Primary Device (Switch ON): Handles all data operations and syncs to Drive.\nSecondary Device (Switch OFF): Primarily for viewing data from a Primary device."
                 )
             }
         )
     }
 }
 
-
 @Composable
 private fun DataManagementSection(
     context: Context,
-    syncManager: Sync, // Pass the Sync instance
+    syncManager: Sync,
     googleDriveSignInEnabled: Boolean,
     onGoogleDriveSignInEnabledChange: (Boolean) -> Unit,
     performAutoSync: Boolean,
     onPerformAutoSyncChange: (Boolean) -> Unit,
     currentSignedInAccount: GoogleSignInAccount?,
+    onSignOutClick: () -> Unit, // Added for the sign out button
     onManualBackupToDriveClick: () -> Unit,
     onRestoreFromFileClick: () -> Unit,
     onExportToDeviceClick: () -> Unit,
@@ -505,89 +486,96 @@ private fun DataManagementSection(
             modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
         )
 
-        // Google Drive Sign-In Toggle
         SettingSwitchRow(
-            icon = Icons.Filled.CloudSync, // Using CloudSync for the main toggle
-            title = if (currentSignedInAccount != null) "Drive Sync: ${currentSignedInAccount.email}" else "Sign in to Google Drive",
-            infoContentDescription = "Google Drive Sign-In Information",
+            icon = Icons.Filled.CloudSync,
+            title = if (googleDriveSignInEnabled) "Drive Sync: ON" else "Drive Sync: OFF",
+            infoContentDescription = "Google Drive Synchronization Information",
             checked = googleDriveSignInEnabled,
-            onCheckedChange = onGoogleDriveSignInEnabledChange,
+            onCheckedChange = onGoogleDriveSignInEnabledChange, // This will trigger sign-in or sign-out
             onIconClick = {
+                val accountStatus = if (currentSignedInAccount != null) {
+                    "Currently signed in as: ${currentSignedInAccount.email}.\n\n"
+                } else {
+                    "Not currently signed in.\n\n"
+                }
                 onIconClick(
                     "Google Drive Synchronization",
-                    "Sign in with your Google Account to enable cloud backup and synchronization features.\n\n" +
-                            "When enabled, you can:\n" +
-                            "- Automatically sync data changes between devices (if 'Automatic Sync' is on).\n" +
-                            "- Manually upload your current data to Drive.\n" +
-                            "- Manually restore data from a file on your device (which could be a Drive download)."
+                    accountStatus +
+                            "Enable to sign in with your Google Account for cloud backup and synchronization.\n\n" +
+                            "Toggling this off will sign you out."
                 )
             }
         )
 
-        // Automatic Sync Toggle (only enabled if Google Drive is signed in)
+        if (currentSignedInAccount != null) {
+            InfoRow(
+                icon = Icons.Filled.AccountCircle,
+                label = "Signed in as",
+                value = currentSignedInAccount.email ?: "Unknown Email"
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            SettingsButton(
+                icon = Icons.Filled.Logout,
+                text = "Sign Out & Switch Account",
+                onClick = onSignOutClick, // Use the passed lambda
+                enabled = true,
+                onInfoClick = {
+                    onIconClick(
+                        "Sign Out / Switch Account",
+                        "Signs you out of the current Google Account (${currentSignedInAccount.email}).\n\n" +
+                                "To sign in with a different account, toggle 'Drive Sync' back on after signing out. You will then be prompted to choose an account."
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         SettingSwitchRow(
             icon = Icons.Filled.Autorenew,
             title = "Automatic Sync (on app launch)",
             infoContentDescription = "Automatic Sync Information",
             checked = performAutoSync,
             onCheckedChange = onPerformAutoSyncChange,
-            enabled = currentSignedInAccount != null, // Only enable if signed in
+            enabled = currentSignedInAccount != null,
             onIconClick = {
                 onIconClick(
                     "Automatic Sync (on app launch)",
-                    "If enabled and you are signed into Google Drive, the app will attempt to download and restore the latest data from another device when you open the app.\n\n" +
-                            "This helps keep your data consistent across multiple devices without manual intervention.\n\n" +
-                            "Requires Google Drive sign-in to be active."
+                    "If enabled and signed into Google Drive, the app will sync data on launch.\nRequires Google Drive sign-in."
                 )
             }
         )
 
-        Spacer(modifier = Modifier.height(8.dp)) // Some spacing before buttons
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // Manual Backup to Google Drive Button
         SettingsButton(
-            icon = Icons.Filled.UploadFile,
-            text = "Upload Data to Drive",
-            onClick = onManualBackupToDriveClick,
-            enabled = currentSignedInAccount != null,
+            icon = Icons.Filled.UploadFile, text = "Upload Data to Drive",
+            onClick = onManualBackupToDriveClick, enabled = currentSignedInAccount != null,
             onInfoClick = {
                 onIconClick(
                     "Upload Data to Drive",
-                    "Manually creates a new backup of your current app data and uploads it as an '.mht' file to your Google Drive in the app's dedicated folder.\n\n" +
-                            "Useful for ensuring your latest data is in the cloud, or for creating a specific restore point.\n\n" +
-                            "Requires Google Drive sign-in."
+                    "Manually uploads current app data to Google Drive.\nRequires Google Drive sign-in."
                 )
             }
         )
 
-        // Manual Restore from Device File Button
         SettingsButton(
-            icon = Icons.Filled.Download, // Or Restore
-            text = "Restore Data from File",
-            onClick = onRestoreFromFileClick,
-            // Enabled even if not signed into Drive, as file could be local
-            // but it's more common to restore Drive backups this way too.
-            enabled = true,
+            icon = Icons.Filled.Download, text = "Restore Data from File",
+            onClick = onRestoreFromFileClick, enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Restore Data from File",
-                    "Allows you to select an '.mht' backup file from your device's storage (e.g., Downloads, or a file you previously saved from Drive) and restore your app data from it.\n\n" +
-                            "WARNING: This will overwrite your current app data. A redundancy backup of your current data will be attempted before restoring."
+                    "Restores app data from a selected '.mht' backup file.\nWARNING: Overwrites current data."
                 )
             }
         )
 
-        // Export to Device (Local Backup) Button
         SettingsButton(
-            icon = Icons.Filled.SaveAlt,
-            text = "Export Data to Device Storage",
-            onClick = onExportToDeviceClick,
-            enabled = true, // Always enabled
+            icon = Icons.Filled.SaveAlt, text = "Export Data to Device Storage",
+            onClick = onExportToDeviceClick, enabled = true,
             onInfoClick = {
                 onIconClick(
                     "Export Data to Device Storage",
-                    "Manually creates a ZIP backup of your app data and saves it to your device's local storage (you'll choose the location via the system file picker).\n\n" +
-                            "This backup is NOT automatically synced to Google Drive and is for local archival or manual transfer."
+                    "Saves a local ZIP backup of app data to your device."
                 )
             }
         )
@@ -611,45 +599,32 @@ private fun AppInfoSection(
         modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
     )
     InfoRow(
-        icon = Icons.Filled.Article, // Changed for package name
+        icon = Icons.Filled.Article,
         label = "Package Name",
-        value = appPackageName, // Use the variable
+        value = appPackageName,
         isMonospace = true,
-        onIconClick = {
-            onIconClick(
-                "Package Name",
-                "The unique identifier for this application on your device and in the Google Play Store (if applicable). It's typically in a reverse domain name format."
-            )
-        }
+        onIconClick = { onIconClick("Package Name", "The unique identifier for this application.") }
     )
     InfoRow(
-        icon = Icons.Filled.Info,
-        label = "Version",
-        value = appVersion,
-        onIconClick = {
-            onIconClick(
-                "App Version",
-                "The current version of the Matt's Health Tracker application installed on your device. Useful for troubleshooting and checking for updates."
-            )
-        }
+        icon = Icons.Filled.Info, label = "Version", value = appVersion,
+        onIconClick = { onIconClick("App Version", "Current version of the application.") }
     )
 
-    // Device ID with Clickable Icon and Regenerate Button
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp), // Reduced padding slightly
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically, modifier = Modifier
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
                 .weight(1f)
                 .padding(end = 8.dp)
         ) {
             Icon(
-                Icons.Filled.Fingerprint,
-                contentDescription = null, // Label text is sufficient
+                Icons.Filled.Fingerprint, contentDescription = null,
                 modifier = Modifier
                     .size(24.dp)
                     .clickable(
@@ -658,9 +633,7 @@ private fun AppInfoSection(
                         onClick = {
                             onIconClick(
                                 "Device ID",
-                                "A unique identifier generated for this app instance on this device. " +
-                                        "It helps distinguish data from this device if you use the app on multiple devices and sync via Google Drive. " +
-                                        "Regenerating it creates a new ID; old cloud backups might not be recognized as originating from this 'new' device identity unless the sync system handles ID changes."
+                                "Unique identifier for this app instance on this device. Helps distinguish data for cloud sync."
                             )
                         }
                     ),
@@ -673,16 +646,12 @@ private fun AppInfoSection(
                     currentAppDeviceID ?: "Not available",
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, // Ensure it doesn't wrap excessively if long
-                    // overflow = TextOverflow.Ellipsis // Add if needed
+                    maxLines = 1
                 )
             }
         }
-        // IconButton for Regenerate
-        if (currentAppDeviceID != null) { // Only show if ID exists
-            IconButton(
-                onClick = { showRegenerateIdConfirmDialog = true }
-            ) {
+        if (currentAppDeviceID != null) {
+            IconButton(onClick = { showRegenerateIdConfirmDialog = true }) {
                 Icon(
                     Icons.Filled.Cached,
                     contentDescription = "Regenerate Device ID",
@@ -692,17 +661,13 @@ private fun AppInfoSection(
         }
     }
 
-
     InfoRow(
-        icon = Icons.Filled.Code,
-        label = "View on GitHub",
-        value = "", // Value not needed as label is the link text
-        isLink = true,
+        icon = Icons.Filled.Code, label = "View on GitHub", value = "", isLink = true,
         onClick = onGitHubClick,
         onIconClick = {
             onIconClick(
                 "View on GitHub",
-                "Opens the source code repository for this application on GitHub. You can view the code, report issues, or contribute."
+                "Opens the source code repository on GitHub."
             )
         }
     )
@@ -711,7 +676,7 @@ private fun AppInfoSection(
         AlertDialog(
             onDismissRequest = { showRegenerateIdConfirmDialog = false },
             title = { Text("Confirm Regenerate ID") },
-            text = { Text("Regenerating the Device ID might affect how this device is identified in cloud backups. Existing cloud data from the old ID will remain, but new backups will use the new ID. Are you sure?") },
+            text = { Text("Regenerating the Device ID might affect cloud sync identification. Are you sure?") },
             confirmButton = {
                 TextButton(onClick = {
                     AppGlobals.regenerateAppDeviceID(context)
@@ -726,7 +691,6 @@ private fun AppInfoSection(
     }
 }
 
-
 @Composable
 private fun InfoRow(
     icon: ImageVector,
@@ -738,42 +702,38 @@ private fun InfoRow(
     onIconClick: (() -> Unit)? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val rowModifier =
-        if (onClick != null && isLink) { // Special handling for links to make whole row clickable
-            Modifier.clickable(
-                interactionSource = interactionSource,
-                indication = LocalIndication.current,
-                onClick = onClick,
-            )
-        } else if (onClick != null) {
-            Modifier.clickable(
-                interactionSource = interactionSource,
-                indication = LocalIndication.current,
-                onClick = onClick
-            )
-        } else {
-            Modifier
-        }
+    val rowModifier = when {
+        onClick != null && isLink -> Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = LocalIndication.current,
+            onClick = onClick
+        )
+
+        onClick != null -> Modifier.clickable(
+            interactionSource = interactionSource,
+            indication = LocalIndication.current,
+            onClick = onClick
+        )
+
+        else -> Modifier
+    }
 
     Row(
         modifier = rowModifier
             .fillMaxWidth()
-            .padding(vertical = 10.dp), // Adjusted padding
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            icon,
-            contentDescription = null, // Label should describe it
+            icon, contentDescription = null,
             modifier = Modifier
                 .size(24.dp)
                 .then(
-                    if (onIconClick != null && !isLink) { // Don't make icon separately clickable if row is a link
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onIconClick
-                        )
-                    } else Modifier
+                    if (onIconClick != null && !isLink) Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onIconClick
+                    ) else Modifier
                 ),
             tint = MaterialTheme.colorScheme.primary
         )
@@ -797,11 +757,6 @@ private fun InfoRow(
     }
 }
 
-
-/**
- * A reusable row composable for settings that include a title, an icon,
- * an optional info icon, and a switch.
- */
 @Composable
 private fun SettingSwitchRow(
     icon: ImageVector,
@@ -810,26 +765,22 @@ private fun SettingSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     onIconClick: () -> Unit,
-    enabled: Boolean = true // Added enabled state for the switch and row
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp) // Reduced padding
-            .semantics { if (!enabled) this.disabled() } // Semantics for accessibility
-            .clickable(
-                enabled = enabled,
-                onClick = { if (enabled) onCheckedChange(!checked) }), // Make row clickable to toggle switch
-        verticalAlignment = Alignment.CenterVertically,
-
-        ) {
+            .padding(vertical = 6.dp)
+            .semantics { if (!enabled) this.disabled() }
+            .clickable(enabled = enabled, onClick = { if (enabled) onCheckedChange(!checked) }),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Icon(
-            icon,
-            contentDescription = null, // Title is descriptive
+            icon, contentDescription = null,
             modifier = Modifier
                 .size(24.dp)
                 .clickable(
-                    enabled = enabled, // Info icon clickable even if switch is disabled for context
+                    enabled = true, // Info icon always clickable for context
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onIconClick
@@ -840,25 +791,19 @@ private fun SettingSwitchRow(
         )
         Spacer(Modifier.width(16.dp))
         Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
+            text = title, style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.weight(1f),
             color = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(
                 alpha = 0.38f
             )
         )
         Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled,
+            checked = checked, onCheckedChange = onCheckedChange, enabled = enabled,
             modifier = Modifier.padding(start = 8.dp)
         )
     }
 }
 
-/**
- * A reusable button for settings screens, with an icon, text, and an optional info icon.
- */
 @Composable
 private fun SettingsButton(
     icon: ImageVector,
@@ -871,35 +816,29 @@ private fun SettingsButton(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp), // Reduced padding
+            .padding(vertical = 4.dp),
         enabled = enabled
     ) {
-        Icon(
-            icon,
-            contentDescription = null, // Button text is descriptive
-            modifier = Modifier.size(ButtonDefaults.IconSize)
-        )
+        Icon(icon, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
         Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-        Text(text, modifier = Modifier.weight(1f)) // Text takes available space
+        Text(text, modifier = Modifier.weight(1f))
 
         if (onInfoClick != null) {
-            Spacer(Modifier.size(ButtonDefaults.IconSpacing)) // Spacer before info icon
+            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
             IconButton(
                 onClick = onInfoClick,
-                modifier = Modifier.size(24.dp), // Ensure info icon is a decent tap target
-                enabled = enabled // Info available even if button action is disabled
+                modifier = Modifier.size(24.dp),
+                enabled = true // Info always available
             ) {
                 Icon(
-                    Icons.Filled.Info,
-                    contentDescription = "$text Information",
-                    tint = if (enabled) MaterialTheme.colorScheme.onPrimary // Or primary if on surface
+                    Icons.Filled.Info, contentDescription = "$text Information",
+                    tint = if (enabled) MaterialTheme.colorScheme.onPrimary // Or current if button is disabled
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                 )
             }
         }
     }
 }
-
 
 @Composable
 fun InformationDialog(
@@ -912,9 +851,7 @@ fun InformationDialog(
         title = { Text(text = title) },
         text = { Text(text = message) },
         confirmButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text("OK")
-            }
+            TextButton(onClick = onDismissRequest) { Text("OK") }
         }
     )
 }

@@ -308,97 +308,163 @@ class Sync(private val context: Context) {
             }
         }
 
+    // In class Sync(private val context: Context)
+
     suspend fun syncOnAppLaunch() = withContext(Dispatchers.IO) {
         Log.i(TAG, "Starting sync on app launch process...")
         if (!AppGlobals.performAutoSync) {
-            Log.i(TAG, "Auto-sync is disabled in AppGlobals. Skipping.")
-            return@withContext
+            Log.i(
+                TAG,
+                "Auto-sync is disabled in AppGlobals. Skipping initial check & restore part."
+            )
+            // Even if auto-sync for restore is off, you might still want to upload current state.
+            // Decide if the upload part below should also be conditional on AppGlobals.performAutoSync
+            // For this example, we'll proceed to upload if user is signed in.
         }
+
         val localDeviceId = currentAppDeviceId
-        Log.d(TAG, "Current device ID: $localDeviceId")
+        Log.d(TAG, "Current device ID for sync: $localDeviceId")
 
-        val foreignFileSyncInfo = getLatestForeignSyncFile()
-        if (foreignFileSyncInfo == null) {
-            Log.i(
-                TAG,
-                "No newer foreign sync file found or not applicable. Sync process complete without restore."
-            )
-            return@withContext
-        }
+        // --- Part 1: Check for and Restore from Foreign Sync File (if auto-sync enabled) ---
+        if (AppGlobals.performAutoSync) { // Only attempt download/restore if auto-sync is on
+            val foreignFileSyncInfo = getLatestForeignSyncFile()
+            if (foreignFileSyncInfo != null) {
+                val (foreignFileId, foreignFileName) = foreignFileSyncInfo
+                Log.i(
+                    TAG,
+                    "Found newer foreign file: ID '$foreignFileId', Name '$foreignFileName'. Proceeding with download and restore."
+                )
 
-        val (foreignFileId, foreignFileName) = foreignFileSyncInfo
-        Log.i(
-            TAG,
-            "Found newer foreign file: ID '$foreignFileId', Name '$foreignFileName'. Proceeding with download and restore."
-        )
+                val tempDownloadDir = File(context.cacheDir, "sync_downloads").apply { mkdirs() }
+                val localDestinationFile = File(tempDownloadDir, foreignFileName)
 
-        val tempDownloadDir = File(context.cacheDir, "sync_downloads").apply { mkdirs() }
-        val localDestinationFile = File(tempDownloadDir, foreignFileName)
+                val downloadSuccess = GoogleDriveUtils.downloadFileFromDrive(
+                    context = context,
+                    account = GoogleDriveUtils.getExistingAccount(context), // Ensure account is still valid
+                    fileId = foreignFileId,
+                    destinationFile = localDestinationFile
+                )
 
-        val downloadSuccess = GoogleDriveUtils.downloadFileFromDrive(
-            context = context,
-            account = GoogleDriveUtils.getExistingAccount(context),
-            fileId = foreignFileId,
-            destinationFile = localDestinationFile
-        )
+                if (downloadSuccess) {
+                    Log.i(
+                        TAG,
+                        "Successfully downloaded foreign sync file to: ${localDestinationFile.absolutePath}"
+                    )
+                    val redundancyPackageTargetDir =
+                        File(context.cacheDir, "redundancy_packages").apply { mkdirs() }
+                    val redundancyPackage = restoreDatabasesAndCreateRedundancyPackage(
+                        mhtFileToRestore = localDestinationFile,
+                        deviceId = localDeviceId,
+                        redundancyPackageTargetDirectory = redundancyPackageTargetDir
+                    )
 
-        if (!downloadSuccess) {
-            Log.e(
-                TAG,
-                "Failed to download foreign sync file: $foreignFileName (ID: $foreignFileId). Aborting restore."
-            )
-            localDestinationFile.delete()
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    context,
-                    "Download of sync file failed.",
-                    Toast.LENGTH_LONG
-                ).show()
+                    if (redundancyPackage != null) {
+                        Log.i(
+                            TAG,
+                            "Restore process from foreign file completed. Redundancy package created: ${redundancyPackage.absolutePath}"
+                        )
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                context,
+                                "Data restored from other device.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        // Optionally, upload the redundancyPackage to Google Drive in a specific folder
+                        // GoogleDriveUtils.uploadFileToDrive(context, GoogleDriveUtils.getExistingAccount(context), redundancyPackage, "your_redundancy_folder_id")
+                        // Log.i(TAG, "Uploaded redundancy package to Drive.")
+                    } else {
+                        Log.e(
+                            TAG,
+                            "Failed to complete restore process from $foreignFileName OR redundancy package creation failed."
+                        )
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                context,
+                                "Restore from other device failed.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    localDestinationFile.delete()
+                    Log.d(TAG, "Cleaned up downloaded temporary file: ${localDestinationFile.name}")
+                } else {
+                    Log.e(
+                        TAG,
+                        "Failed to download foreign sync file: $foreignFileName (ID: $foreignFileId). Aborting restore."
+                    )
+                    localDestinationFile.delete() // Clean up if download failed partially
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            "Download of sync file failed.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    // Even if download/restore fails, we might still want to upload current state (Part 2)
+                }
+            } else {
+                Log.i(
+                    TAG,
+                    "No newer foreign sync file found or not applicable. No restore performed."
+                )
             }
-            return@withContext
-        }
-        Log.i(
-            TAG,
-            "Successfully downloaded foreign sync file to: ${localDestinationFile.absolutePath}"
-        )
-
-        val redundancyPackageTargetDir = context.cacheDir // Or another suitable directory
-        val redundancyPackage = restoreDatabasesAndCreateRedundancyPackage(
-            mhtFileToRestore = localDestinationFile,
-            deviceId = localDeviceId,
-            redundancyPackageTargetDirectory = redundancyPackageTargetDir
-        )
-
-        if (redundancyPackage != null) {
-            Log.i(
-                TAG,
-                "Restore process initiated. Redundancy package created: ${redundancyPackage.absolutePath}"
-            )
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    context,
-                    "Data restored. Redundancy backup created.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-            // Optionally, upload the redundancyPackage to Google Drive
-            // GoogleDriveUtils.uploadFileToDrive(context, GoogleDriveUtils.getExistingAccount(context), redundancyPackage, driveSyncFolderId)
-            // Log.i(TAG, "Uploaded redundancy package to Drive.")
         } else {
-            Log.e(
-                TAG,
-                "Failed to create redundancy package during restore process OR restore input was invalid."
-            )
-            withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    context,
-                    "Restore failed or redundancy package creation failed.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+            Log.i(TAG, "Auto-sync for downloading/restoring is disabled. Skipping that part.")
         }
-        localDestinationFile.delete()
-        Log.d(TAG, "Cleaned up downloaded temporary file: ${localDestinationFile.name}")
+
+        // --- Part 2: Package and Upload Current Device's State ---
+        // This part runs regardless of whether a restore happened, to ensure this device's state is pushed.
+        // However, it should only run if the user is signed in.
+
+        val currentAccount = GoogleDriveUtils.getExistingAccount(context)
+        if (currentAccount == null) {
+            Log.w(TAG, "Cannot perform automatic upload: User not signed in to Google Drive.")
+            // No toast here, as this is an automatic background process.
+            Log.i(TAG, "Sync on app launch process completed (no upload due to no sign-in).")
+            return@withContext
+        }
+
+        Log.i(TAG, "Proceeding to package and upload current device's state to Drive...")
+        val tempBackupDir = File(context.cacheDir, "auto_sync_uploads").apply { mkdirs() }
+        // Using an empty specificSuffix for regular sync files, or you can add one like "-auto"
+        val localMhtFileToUpload = packageDatabases(
+            deviceId = localDeviceId,
+            targetDirectory = tempBackupDir,
+            specificSuffix = "" // Or "-auto_sync_push" or similar if you want to differentiate
+        )
+
+        if (localMhtFileToUpload == null) {
+            Log.e(TAG, "Failed to package databases for automatic upload.")
+            // No toast here for automatic process unless critical
+            Log.i(TAG, "Sync on app launch process completed (packaging failed).")
+            return@withContext
+        }
+
+        Log.i(TAG, "Databases packaged for automatic upload: ${localMhtFileToUpload.absolutePath}")
+
+        val uploadedFileId = GoogleDriveUtils.uploadFileToDrive(
+            context = context,
+            account = currentAccount,
+            fileToUpload = localMhtFileToUpload,
+            targetFolderId = driveSyncFolderId // Upload to the same sync folder
+        )
+
+        if (uploadedFileId != null) {
+            Log.i(
+                TAG,
+                "Automatic sync package uploaded to Drive successfully. File ID: $uploadedFileId"
+            )
+            // Maybe a subtle log or analytics event, avoid Toast for automatic background success
+        } else {
+            Log.e(TAG, "Failed to upload automatic sync package to Drive.")
+            // Keep localMhtFileToUpload in case of failure for potential later retry, or log its path.
+            // Avoid Toast for automatic background failure unless it's a persistent issue.
+        }
+        // Clean up the local temporary packaged file after attempting upload
+        // (even if upload failed, to prevent cache buildup, unless you have a retry strategy for it)
+        localMhtFileToUpload.delete()
+        Log.d(TAG, "Cleaned up temporary auto-sync package file: ${localMhtFileToUpload.name}")
         Log.i(TAG, "Sync on app launch process completed.")
     }
 

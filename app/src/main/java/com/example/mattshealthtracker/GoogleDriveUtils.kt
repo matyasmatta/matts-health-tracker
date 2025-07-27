@@ -12,6 +12,7 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultCallback
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -79,6 +80,26 @@ object GoogleDriveUtils {
                 }
             }
         }
+
+    // Inside @Composable fun SettingsDialog(...)
+
+    // Add a function to handle sign out
+    fun signOut(
+        context: Context,
+        onSignOutComplete: (Boolean) -> Unit
+    ) { // Changed to Boolean for clarity
+        getGoogleSignInClient(context).signOut()
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    Log.d("GoogleDriveUtils", "Google Sign-out successful.")
+                    onSignOutComplete(true)
+                } else {
+                    Log.e("GoogleDriveUtils", "Google Sign-out failed.", task.exception)
+                    onSignOutComplete(false)
+                }
+            }
+    }
+
 
     @Composable
     fun rememberGoogleSignInLauncher(onSignInComplete: (GoogleSignInAccount?) -> Unit): ActivityResultLauncher<Intent> {
@@ -454,4 +475,5 @@ object GoogleDriveUtils {
             .setApplicationName(context.getString(R.string.app_name))
             .build()
     }
+
 }
