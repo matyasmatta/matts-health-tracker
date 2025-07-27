@@ -89,11 +89,13 @@ import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.DinnerDining // Import the new icon
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.disabled
+import androidx.lifecycle.ViewModelProvider
 
 
 class MainActivity : ComponentActivity() {
@@ -358,13 +360,11 @@ fun DateNavigationBar(
     }
 }
 
-// Add this to your SettingsDialog composable (replace the existing one)
-// Add this to your SettingsDialog composable (replace the existing one)
 @Composable
 fun SettingsDialog(
     onDismissRequest: () -> Unit,
-    currentSignedInAccount: GoogleSignInAccount?, // Receive signedInAccount as parameter
-    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit // Receive callback to update signedInAccount
+    currentSignedInAccount: GoogleSignInAccount?,
+    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
@@ -375,18 +375,20 @@ fun SettingsDialog(
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
-        uri?.let { /* exportDataToCSVZip(context, it) */ } // Commented out exportDataToCSVZip as it's not provided
+        uri?.let { /* exportDataToCSVZip(context, it) */ }
     }
 
-    // Using remember to observe changes in AppGlobals.energyUnitPreference
     var googleDriveSyncEnabled by remember { mutableStateOf(currentSignedInAccount != null) }
     var showHealthConnectDialog by remember { mutableStateOf(false) }
+    val signedInAccount = currentSignedInAccount
+    val scope = rememberCoroutineScope()
+    val isDevicePrimary = AppGlobals.deviceRole == DeviceRole.PRIMARY
 
-    // No longer manage signedInAccount state locally, use parameter:
-    val signedInAccount = currentSignedInAccount // Use the parameter passed from MainActivity
+    // State to control the visibility of the info dialog
+    var showDeviceRoleInfoDialog by remember { mutableStateOf(false) }
 
     val signInLauncher = GoogleDriveUtils.rememberGoogleSignInLauncher { account ->
-        onSignedInAccountChange(account) // Update signedInAccount state in MainActivity using callback
+        onSignedInAccountChange(account)
         if (account != null) {
             Toast.makeText(context, "Google Sign-in successful: ${account.email}", Toast.LENGTH_SHORT).show()
             Log.d("SettingsDialog", "Sign-in successful, Account: ${account.email}")
@@ -396,18 +398,16 @@ fun SettingsDialog(
         }
     }
 
-    val scope = rememberCoroutineScope() // <--- Create a coroutine scope
-
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(shape = MaterialTheme.shapes.medium) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Settings", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(16.dp))
 
-                Text("Preferences", style = MaterialTheme.typography.titleMedium) // New category
+                Text("Preferences", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Energy Unit Switcher (kcal/kJ)
+                // Energy Unit Switcher
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -417,16 +417,54 @@ fun SettingsDialog(
                 ) {
                     Text("Energy Unit (kcal/kJ)", style = MaterialTheme.typography.bodyMedium)
                     Switch(
-                        checked = AppGlobals.energyUnitPreference == EnergyUnit.KJ, // True if KJ is selected
+                        checked = AppGlobals.energyUnitPreference == EnergyUnit.KJ,
                         onCheckedChange = { isChecked ->
                             AppGlobals.energyUnitPreference = if (isChecked) EnergyUnit.KJ else EnergyUnit.KCAL
                             val unitName = if (isChecked) "kJ" else "kcal"
                             Toast.makeText(context, "Energy unit set to $unitName", Toast.LENGTH_SHORT).show()
-                            Log.d("SettingsDialog", "Energy unit toggled to: ${AppGlobals.energyUnitPreference}")
                         }
                     )
                 }
 
+                // Device Role Switch with Info Icon
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (isDevicePrimary) "Device Role: Primary" else "Device Role: Secondary",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        // Info Icon Button
+                        IconButton(onClick = { showDeviceRoleInfoDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.Info,
+                                contentDescription = "Device Role Information",
+                                tint = MaterialTheme.colorScheme.primary // Optional: style the icon
+                            )
+                        }
+                    }
+                    Switch(
+                        checked = isDevicePrimary,
+                        onCheckedChange = { isChecked ->
+                            val newRole =
+                                if (isChecked) DeviceRole.PRIMARY else DeviceRole.SECONDARY
+                            AppGlobals.updateDeviceRole(newRole)
+                            val roleName = if (isChecked) "Primary" else "Secondary"
+                            Toast.makeText(
+                                context,
+                                "Device role set to $roleName",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    )
+                }
+
+                // ... (rest of your settings like Data Control, App Info, etc.) ...
                 Spacer(modifier = Modifier.height(16.dp)) // Spacer after preferences
 
                 Text("Data control", style = MaterialTheme.typography.titleMedium)
@@ -447,10 +485,13 @@ fun SettingsDialog(
                             googleDriveSyncEnabled = isChecked
                             Log.d("SettingsDialog", "Google Drive Sync toggled: $isChecked")
                             if (isChecked) {
-                                if (signedInAccount == null) { // Use the signedInAccount parameter (which reflects state from MainActivity)
+                                if (signedInAccount == null) {
                                     Log.d("SettingsDialog", "Initiating Google Sign-in...")
-                                    scope.launch { // <--- Launch a coroutine here
-                                        GoogleDriveUtils.signInToGoogleDrive(context, signInLauncher) // Call suspend function inside coroutine
+                                    scope.launch {
+                                        GoogleDriveUtils.signInToGoogleDrive(
+                                            context,
+                                            signInLauncher
+                                        )
                                     }
                                 } else {
                                     Log.d("SettingsDialog", "Already signed in: ${signedInAccount?.email}")
@@ -471,7 +512,7 @@ fun SettingsDialog(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = {
-                    onDismissRequest() // Placeholder, ideally would trigger import flow
+                    onDismissRequest()
                     Toast.makeText(context, "Import from CSV (TODO)", Toast.LENGTH_SHORT).show()
                 }) {
                     Text("Import from CSV")
@@ -506,8 +547,28 @@ fun SettingsDialog(
                         Text("Close")
                     }
                 }
+
             }
         }
+    }
+
+    // AlertDialog for Device Role Information
+    if (showDeviceRoleInfoDialog) {
+        val infoText = if (isDevicePrimary) {
+            "Primary Device:\n\nHealthConnect data from this device will be used as the source of truth and can be synced to update secondary devices."
+        } else {
+            "Secondary Device:\n\nThis device will primarily read HealthConnect data synced from a designated Primary device. To contribute data, set up another device as Primary or switch this device to Primary."
+        }
+        AlertDialog(
+            onDismissRequest = { showDeviceRoleInfoDialog = false },
+            title = { Text("Device Role Information") },
+            text = { Text(infoText) },
+            confirmButton = {
+                TextButton(onClick = { showDeviceRoleInfoDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     // Show Health Connect Dialog when button is clicked
@@ -518,50 +579,109 @@ fun SettingsDialog(
     }
 }
 
-// New Health Connect Dialog Composable
 @Composable
 fun HealthConnectDialog(
     onDismissRequest: () -> Unit
+    // Consider adding: openedDayString: String = AppGlobals.openedDay
+    // if this dialog might need to show data for a day other than the global default
 ) {
     val context = LocalContext.current
-
-    // Obtain the ViewModel
-    val healthConnectViewModel: HealthConnectViewModel = viewModel(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-            if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
-                @Suppress("UNCHECKED_CAST")
-                return HealthConnectViewModel(context) as T
-            }
-            throw IllegalArgumentException("Unknown ViewModel class")
-        }
-    })
-
-    // Coroutine scope for launching suspend functions
     val coroutineScope = rememberCoroutineScope()
+
+    // Obtain the ViewModel, ensuring applicationContext is passed
+    val healthConnectViewModel: HealthConnectViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
+                    @Suppress("UNCHECKED_CAST")
+                    // Use applicationContext
+                    return HealthConnectViewModel(context.applicationContext) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
+            }
+        }
+    )
+
+    // Determine which day's data to fetch. For this dialog, using AppGlobals.openedDay seems appropriate.
+    val dayToFetch = AppGlobals.openedDay
 
     // Activity Result Launcher for Health Connect permissions
     val requestPermissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
-        onResult = { permissionsResult ->
-            // Check if all required permissions were granted
-            val allPermissionsGranted = healthConnectViewModel.permissions.all { permissionsResult[it] == true }
-            if (allPermissionsGranted) {
-                Log.d("HealthConnectDialog", "All Health Connect permissions granted.")
+        onResult = { permissionsResultMap ->
+            val allRequiredPermissionsGranted =
+                healthConnectViewModel.permissions.all { permissionString ->
+                    permissionsResultMap[permissionString] == true
+                }
+            if (allRequiredPermissionsGranted) {
+                Log.d("HealthConnectDialog", "All Health Connect permissions granted via launcher.")
                 healthConnectViewModel.permissionsGranted = true // Update ViewModel state
                 coroutineScope.launch {
-                    healthConnectViewModel.checkPermissionsAndFetchData() // Fetch data after permissions granted
+                    Log.d(
+                        "HealthConnectDialog",
+                        "Permissions granted, fetching data for day: $dayToFetch"
+                    )
+                    healthConnectViewModel.fetchDataForDay(dayToFetch)
                 }
             } else {
-                Log.w("HealthConnectDialog", "Not all Health Connect permissions granted.")
+                Log.w(
+                    "HealthConnectDialog",
+                    "Not all Health Connect permissions granted via launcher."
+                )
                 healthConnectViewModel.permissionsGranted = false // Update ViewModel state
                 healthConnectViewModel.errorMessage = "Not all necessary Health Connect permissions were granted."
             }
         }
     )
 
-    // LaunchedEffect to check permissions and fetch data on initial composition
-    LaunchedEffect(Unit) {
-        healthConnectViewModel.checkPermissionsAndFetchData()
+    // LaunchedEffect to check HC availability, then permissions, and then fetch data on initial composition
+    // or if healthConnectAvailable status changes.
+    LaunchedEffect(key1 = healthConnectViewModel.healthConnectAvailable, key2 = dayToFetch) {
+        if (!healthConnectViewModel.healthConnectAvailable) {
+            // This is handled by the check in ViewModel init, but double-checking here is fine.
+            // UI will update based on healthConnectViewModel.errorMessage if already set.
+            Log.w(
+                "HealthConnectDialog",
+                "Health Connect not available (checked in LaunchedEffect)."
+            )
+            // No need to set errorMessage here again if ViewModel already does it.
+            return@LaunchedEffect
+        }
+
+        Log.d(
+            "HealthConnectDialog",
+            "Health Connect is available. Checking permissions status for day: $dayToFetch."
+        )
+
+        if (healthConnectViewModel.permissionsGranted) {
+            Log.d(
+                "HealthConnectDialog",
+                "Permissions already marked as granted in ViewModel. Fetching data for $dayToFetch."
+            )
+            healthConnectViewModel.fetchDataForDay(dayToFetch)
+        } else {
+            val previouslyGranted = healthConnectViewModel.healthConnectIntegrator.hasPermissions()
+            if (previouslyGranted) {
+                Log.d(
+                    "HealthConnectDialog",
+                    "Permissions previously granted (checked with integrator). Fetching data for $dayToFetch."
+                )
+                healthConnectViewModel.permissionsGranted = true
+                healthConnectViewModel.fetchDataForDay(dayToFetch)
+            } else {
+                Log.d("HealthConnectDialog", "Permissions not granted. Requesting permissions.")
+                if (healthConnectViewModel.permissions.isNotEmpty()) {
+                    requestPermissionsLauncher.launch(healthConnectViewModel.permissions)
+                } else {
+                    Log.e(
+                        "HealthConnectDialog",
+                        "Permissions array in ViewModel is empty. Cannot request."
+                    )
+                    healthConnectViewModel.errorMessage =
+                        "Could not request Health Connect permissions: configuration error."
+                }
+            }
+        }
     }
 
     Dialog(onDismissRequest = onDismissRequest) {
@@ -583,7 +703,6 @@ fun HealthConnectDialog(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Health Connect Integration Content
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -600,20 +719,30 @@ fun HealthConnectDialog(
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(8.dp))
-                        // Provide action buttons based on the error
                         if (!healthConnectViewModel.healthConnectAvailable) {
                             Button(onClick = { healthConnectViewModel.openHealthConnectSettings() }) {
                                 Text("Install Health Connect App")
                             }
                         } else if (!healthConnectViewModel.permissionsGranted) {
-                            Button(onClick = { healthConnectViewModel.requestPermissions(requestPermissionsLauncher) }) {
+                            Button(onClick = {
+                                if (healthConnectViewModel.permissions.isNotEmpty()) {
+                                    healthConnectViewModel.requestPermissions(
+                                        requestPermissionsLauncher
+                                    )
+                                } else {
+                                    Log.e(
+                                        "HealthConnectDialog",
+                                        "Permissions array in ViewModel is empty for Grant button."
+                                    )
+                                    // Optionally show a toast or update error message
+                                }
+                            }) {
                                 Text("Grant Health Connect Permissions")
                             }
                         } else {
-                            // General retry or open settings if data not found
                             Button(onClick = {
                                 coroutineScope.launch {
-                                    healthConnectViewModel.checkPermissionsAndFetchData()
+                                    healthConnectViewModel.fetchDataForDay(dayToFetch)
                                 }
                             }) {
                                 Text("Retry Data Fetch")
@@ -636,7 +765,16 @@ fun HealthConnectDialog(
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = { healthConnectViewModel.requestPermissions(requestPermissionsLauncher) }) {
+                        Button(onClick = {
+                            if (healthConnectViewModel.permissions.isNotEmpty()) {
+                                healthConnectViewModel.requestPermissions(requestPermissionsLauncher)
+                            } else {
+                                Log.e(
+                                    "HealthConnectDialog",
+                                    "Permissions array in ViewModel is empty for Grant button (main flow)."
+                                )
+                            }
+                        }) {
                             Text("Grant Health Connect Permissions")
                         }
                     } else {
@@ -645,22 +783,18 @@ fun HealthConnectDialog(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // Weight data
                             healthConnectViewModel.latestWeight?.let { weight ->
                                 Text(
                                     text = "Latest Weight: ${String.format("%.2f", weight)} kg",
                                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                                     textAlign = TextAlign.Center
                                 )
-                            } ?: run {
-                                Text(
-                                    text = "No recent weight data found.",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
+                            } ?: Text(
+                                text = "No recent weight data found.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
+                            )
 
-                            // BMR data
                             healthConnectViewModel.bmr?.let { bmr ->
                                 Text(
                                     text = "Est. BMR: ${String.format("%.0f", bmr)} kcal/day",
@@ -669,15 +803,22 @@ fun HealthConnectDialog(
                                 )
                             } ?: run {
                                 if (healthConnectViewModel.latestWeight != null) {
+                                    // Check if user profile data is available in AppGlobals for a more accurate message
+                                    val profile = AppGlobals.userProfile
+                                    val message =
+                                        if (profile.dateOfBirth == null || profile.heightCm == null || profile.gender == Gender.OTHER) {
+                                            "Cannot calculate BMR (missing profile data: age, height, or gender)."
+                                        } else {
+                                            "BMR data not available." // Generic if profile seems complete but BMR is null
+                                        }
                                     Text(
-                                        text = "Cannot calculate BMR (missing height/age/gender data for demo).",
+                                        text = message,
                                         style = MaterialTheme.typography.bodySmall,
                                         textAlign = TextAlign.Center
                                     )
                                 }
                             }
 
-                            // Additional health data
                             healthConnectViewModel.totalSteps?.let { steps ->
                                 Text(
                                     text = "Steps Today: ${String.format("%,d", steps)}",
@@ -702,6 +843,19 @@ fun HealthConnectDialog(
                                 )
                             }
 
+                            if (healthConnectViewModel.latestWeight == null && healthConnectViewModel.totalSteps == null &&
+                                healthConnectViewModel.activeCaloriesBurned == null && healthConnectViewModel.totalSleepDuration == null &&
+                                healthConnectViewModel.errorMessage == null && healthConnectViewModel.healthConnectAvailable && healthConnectViewModel.permissionsGranted
+                            ) {
+                                Text(
+                                    "No health data found for $dayToFetch in Health Connect.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            }
+
+
                             Spacer(Modifier.height(8.dp))
 
                             Row(
@@ -709,7 +863,7 @@ fun HealthConnectDialog(
                             ) {
                                 Button(onClick = {
                                     coroutineScope.launch {
-                                        healthConnectViewModel.checkPermissionsAndFetchData()
+                                        healthConnectViewModel.fetchDataForDay(dayToFetch)
                                     }
                                 }) {
                                     Text("Refresh Data")
@@ -725,7 +879,6 @@ fun HealthConnectDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Info text
                 Text(
                     text = "This demonstrates integration with Health Connect to retrieve health metrics. Ensure the Health Connect app is installed and permissions are granted for accurate data.",
                     style = MaterialTheme.typography.bodySmall,
@@ -735,7 +888,6 @@ fun HealthConnectDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Close button
                 Row(
                     horizontalArrangement = Arrangement.End,
                     modifier = Modifier.fillMaxWidth()
@@ -748,6 +900,7 @@ fun HealthConnectDialog(
         }
     }
 }
+
 
 private fun exportDataToCSVZip(context: Context, destinationUri: Uri) {
     Log.d("Export CSV", "exportDataToCSVZip function CALLED. Destination URI: $destinationUri")
