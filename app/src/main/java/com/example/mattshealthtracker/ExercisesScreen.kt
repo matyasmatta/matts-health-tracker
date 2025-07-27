@@ -396,7 +396,7 @@ fun RoutineChecklist(
     val completedMorningExercises = morningChecks.value.count { it.value }
     val completedEveningExercises = eveningChecks.value.count { it.value }
 
-    val totalMorningExercises = 19
+    val totalMorningExercises = 20
     val totalEveningExercises = 22
 
     val estimatedMorningMinutes = 15
@@ -623,7 +623,9 @@ fun PostureChecklist(
         "Scapular retractions: Squeeze shoulder blades back & down — hold 5 sec, repeat 10x"
     )
     Text("🧍‍♂️ Posture Exercises (Repeat 3x whole set)", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -655,7 +657,9 @@ fun MorningJournallingChecklist(
         "Sleep Tracking: If you haven't done so, update this nights sleep data"
     )
     Text("✍️ Mental Processing", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -687,7 +691,9 @@ fun EveningJournallingChecklist(
         "Symptom Tracking: Slide the sliders in the tab nextdoor"
     )
     Text("✍️ Mental Processing", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -718,10 +724,13 @@ fun MorningStretchesChecklist(
         "Back Stretches: Kneel forward from sitting, left, right (2x 5 seconds)",
         "Kneeling Forward: Stand up and let your hands touch your feet (30 seconds)",
         "Cobra Stretch: Lie on belly, lift chest with arms — 10–15 sec, 2x",
-        "Child's Pose: Kneel, fold forward, arms stretched — 30–60 sec"
+        "Child's Pose: Kneel, fold forward, arms stretched — 30–60 sec",
+        "Body Cross: Like I was taught on my physiotherapy class — 15 sec"
     )
     Text("🧘 General Stretches", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -756,7 +765,9 @@ fun TMJReleaseChecklist(
         "Jaw wiggles: Gently move jaw side to side — 10x to loosen tension"
     )
     Text("😬 TMJ Release Exercises", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -791,7 +802,9 @@ fun NeckStrengtheningStretchingChecklist(
         "Isometric holds: Push head gently into hand in each direction (front, back, left, right) — 5 sec each, 1x daily"
     )
     Text("🧠 Neck Strengthening & Stretching", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
@@ -828,7 +841,9 @@ fun VagusNerveDestressingChecklist(
         "Humming, low and relaxed — 1 min"
     )
     Text("🫁 Vagus Nerve & Destressing Moves", style = MaterialTheme.typography.bodyMedium)
-    Column(modifier = Modifier.padding(start = 16.dp).padding(innerPadding)) {
+    Column(modifier = Modifier
+        .padding(start = 16.dp)
+        .padding(innerPadding)) {
         exerciseLabels.forEach { label ->
             CheckboxItem(
                 label = label,
