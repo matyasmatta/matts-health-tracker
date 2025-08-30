@@ -84,11 +84,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.DinnerDining // Import the new icon
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.graphics.Path
@@ -1189,6 +1191,7 @@ fun HealthTrackerScreen(openedDay: String) {
     // which you confirmed returns List<TrackerItem>
     var miscellaneousItemsFromDb by remember(openedDay) { mutableStateOf<List<TrackerItem>>(emptyList()) }
     var yesterdayMiscellaneousItemsFromDb by remember(openedDay) { mutableStateOf<List<TrackerItem>>(emptyList()) }
+    var showManageSymptomsDialog by remember { mutableStateOf(false) } // <<< ADD THIS STATE
 
 
     // --- UI States for Non-Symptom Fields (managed separately as before) ---
@@ -1458,8 +1461,31 @@ fun HealthTrackerScreen(openedDay: String) {
                 unifiedSymptomsUIList.filter { it.wasActiveYesterday }
             }
 
-            Text("Symptoms", style = MaterialTheme.typography.titleLarge)
+            Row(
+                modifier = Modifier.fillMaxWidth(), // Allow Row to span width for arrangement
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween // Option 1: Pushes icon to far right
+            ) {
+                Text("Symptoms", style = MaterialTheme.typography.titleLarge)
+                // Option 2: Fixed space if not using SpaceBetween
+                Spacer(Modifier.width(8.dp)) // This spacer now works correctly inside the Row
+                IconButton(
+                    onClick = {
+                        showManageSymptomsDialog = true
+                        Log.d("SymptomsEdit", "Edit symptoms icon clicked - dialog should open")
+                        // TODO: Set state for dialog
+                    },
+                    modifier = Modifier.size(48.dp) // IconButton itself
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "Edit Symptoms List",
+                        // modifier = Modifier.size(24.dp) // You can also size the Icon within the IconButton
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(2.dp)) // Space between title and first item
+
 
             if (pinnedSymptoms.isNotEmpty()) {
                 pinnedSymptoms.forEach { item ->
@@ -1733,7 +1759,148 @@ fun HealthTrackerScreen(openedDay: String) {
             //Spacer(modifier = Modifier.height(16.dp)) // Space after Notes section
         }
     }
+    if (showManageSymptomsDialog) {
+        ManageSymptomsDialog(
+            onDismissRequest = { showManageSymptomsDialog = false },
+            appGlobals = AppGlobals, // Pass the AppGlobals singleton
+            context = context
+        )
+    }
 }
+
+@OptIn(ExperimentalMaterial3Api::class) // For AlertDialog, TextField, Button
+@Composable
+fun ManageSymptomsDialog(
+    onDismissRequest: () -> Unit,
+    appGlobals: AppGlobals, // To access userDefinedSymptomNames and management functions
+    context: Context // Needed for AppGlobals functions that interact with SharedPreferences
+) {
+    // This state will make the LazyColumn recompose when AppGlobals.userDefinedSymptomNames changes
+    val userSymptoms by rememberUpdatedState(newValue = appGlobals.userDefinedSymptomNames)
+
+    var newSymptomText by remember { mutableStateOf("") }
+    var showDeleteConfirmationDialog by remember { mutableStateOf<String?>(null) } // Holds name of symptom to delete
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Manage Symptoms") },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 400.dp)) { // Constrain height for scrollability
+                Text(
+                    "Add or remove your custom symptom trackers.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                // Add New Symptom Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                ) {
+                    OutlinedTextField(
+                        value = newSymptomText,
+                        onValueChange = { newSymptomText = it },
+                        label = { Text("New symptom name") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (newSymptomText.isNotBlank()) {
+                                appGlobals.addUserDefinedSymptom(context, newSymptomText.trim())
+                                newSymptomText = "" // Clear field
+                            }
+                        },
+                        enabled = newSymptomText.isNotBlank()
+                    ) {
+                        Text("Add")
+                    }
+                }
+
+                // List of Existing Symptoms
+                if (userSymptoms.isEmpty()) {
+                    Text(
+                        "No custom symptoms defined yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                } else {
+                    Text(
+                        "Your Symptoms:",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    LazyColumn(
+                        modifier = Modifier.weight(
+                            1f,
+                            fill = false
+                        ), // Allows LazyColumn to scroll within dialog
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(userSymptoms, key = { it }) { symptomName ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(symptomName, modifier = Modifier.weight(1f))
+                                IconButton(
+                                    onClick = {
+                                        showDeleteConfirmationDialog =
+                                            symptomName // Set symptom to delete
+                                    },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete $symptomName",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                            if (symptomName != userSymptoms.lastOrNull()) {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismissRequest) { Text("Done") }
+        },
+        dismissButton = null // No explicit cancel, "Done" serves as confirm/dismiss
+    )
+
+    // Delete Confirmation Dialog
+    if (showDeleteConfirmationDialog != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmationDialog = null }, // Dismiss confirmation
+            title = { Text("Confirm Delete") },
+            text = { Text("Are you sure you want to delete the symptom \"$showDeleteConfirmationDialog\"? This cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmationDialog?.let { nameToDelete ->
+                            appGlobals.deleteUserDefinedSymptom(context, nameToDelete)
+                        }
+                        showDeleteConfirmationDialog = null // Close confirmation dialog
+                    }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmationDialog = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+
 @Composable
 fun ExpandableSection(
     title: String,
