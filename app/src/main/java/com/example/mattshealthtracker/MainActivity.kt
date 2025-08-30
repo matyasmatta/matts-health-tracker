@@ -1251,6 +1251,8 @@ fun HealthTrackerScreen(openedDay: String) {
     var authoritativeSleepDurationHours by remember { mutableStateOf<Float?>(null) }
     var isLoadingSleepData by remember { mutableStateOf(false) } // To show loading state
     val healthConnectIntegrator = remember { HealthConnectIntegrator(context.applicationContext) }
+    var authoritativeStepCount by remember { mutableStateOf<Long?>(null) }
+    var isLoadingStepsData by remember { mutableStateOf(false) }
 
     LaunchedEffect(
         key1 = openedDay,
@@ -1278,6 +1280,14 @@ fun HealthTrackerScreen(openedDay: String) {
                 "Updated sleepUISliderValues[$sleepLengthIndex] to ${newList[sleepLengthIndex]} based on integrator result."
             )
         }
+        isLoadingStepsData = true
+        Log.d("StepsSectionUI", "Fetching authoritative steps data via integrator for $openedDay")
+
+        // Assuming getStepsForDay returns Long? (number of steps)
+        val stepsFromResult: Long? = healthConnectIntegrator.getStepsForDay(openedDay)
+        authoritativeStepCount = stepsFromResult
+        isLoadingStepsData = false
+        Log.d("StepsSectionUI", "Integrator result for steps on $openedDay: $stepsFromResult steps")
     }
 
     // --- Data Loading and Merging ---
@@ -1595,7 +1605,25 @@ fun HealthTrackerScreen(openedDay: String) {
 
             // --- Externals Section ---
             Text("Externals", style = MaterialTheme.typography.titleLarge)
+            // Then, in your UI where you want to display it:
+            if (isLoadingStepsData) {
+                Text("Loading steps data...", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(
+                    text = "Steps today: ${
+                        authoritativeStepCount?.let { steps ->
+                            // Format the integer/long step count. 
+                            // You can use number formatting for thousands separators if desired.
+                            steps.toString() // Simple string conversion
+                            // Or for formatting with commas, e.g., "10,532 steps":
+                            // java.text.NumberFormat.getInstance().format(steps)
+                        } ?: "N/A" // Or "0" or "No data"
+                    }",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
+
             externalLabels.forEachIndexed { index, labelString ->
                 Text(
                     text = labelString,
