@@ -83,7 +83,7 @@ sealed class ExerciseScreenSectionInfo(
         "basics",
         "Basic Exercises",
         Icons.Default.AccessibilityNew,
-        true
+        false
     ) // Example: Basics is core
 
     object Breathing :
@@ -171,6 +171,7 @@ object AppGlobals {
         loadPerformAutoSync(context)
         loadVisibleBottomNavRoutes(context) // Load the new preference for bottom nav items
         loadUserDefinedSymptomNames(context)
+        loadVisibleExerciseSectionIds(context)
         Log.d("AppGlobals", "Initialization complete.")
     }
 
