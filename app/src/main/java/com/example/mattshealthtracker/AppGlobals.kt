@@ -4,9 +4,18 @@ package com.example.mattshealthtracker
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Medication
+import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.google.gson.Gson // For saving Set<String> easily
+import com.google.gson.reflect.TypeToken // For loading Set<String>
 import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.ZoneId
@@ -21,14 +30,44 @@ import java.util.UUID // Import UUID
 // Enums (keep them here or move to separate files if they grow)
 enum class EnergyUnit { KCAL, KJ }
 enum class DeviceRole { PRIMARY, SECONDARY }
-enum class Gender { MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY } // Added PREFER_NOT_TO_SAY
+enum class Gender { MALE, FEMALE, OTHER, PREFER_NOT_TO_SAY }
 
 // UserProfile Data Class
 data class UserProfile(
-    val gender: Gender = Gender.PREFER_NOT_TO_SAY, // Default value
-    val dateOfBirth: ZonedDateTime? = null, // Default value
-    val heightCm: Double? = null // Optional: Add height if needed for BMR globally
+    val gender: Gender = Gender.PREFER_NOT_TO_SAY,
+    val dateOfBirth: ZonedDateTime? = null,
+    val heightCm: Double? = null
 )
+
+// Sealed class for Bottom Navigation Item information
+// This defines all possible items and their properties.
+sealed class BottomNavItemInfo(
+    val route: String,
+    val defaultLabel: String, // Default label, can be overridden by user preferences later if needed
+    val defaultIcon: ImageVector, // Default icon
+    val isCoreFeature: Boolean = false // Core features might not be hideable or are shown by default
+) {
+    object AddData : BottomNavItemInfo("add_data", "Tracking", Icons.Default.MonitorHeart, true)
+    object Statistics :
+        BottomNavItemInfo("statistics", "Statistics", Icons.Default.QueryStats, true)
+
+    object Food : BottomNavItemInfo("food", "Food", Icons.Default.Restaurant)
+    object Exercises : BottomNavItemInfo("exercises", "Routines", Icons.Default.FitnessCenter)
+    object MedicationTracking :
+        BottomNavItemInfo("medication_tracking", "Meds", Icons.Default.Medication)
+    // Add other potential items here in the future
+
+    companion object {
+        fun getAllItems(): List<BottomNavItemInfo> {
+            // Defines the order in which items will appear if all are visible
+            return listOf(AddData, Statistics, Food, Exercises, MedicationTracking)
+        }
+
+        fun getItemByRoute(route: String): BottomNavItemInfo? {
+            return getAllItems().find { it.route == route }
+        }
+    }
+}
 
 object AppGlobals {
     // Current day formatted as String (yyyy-MM-dd)
@@ -40,17 +79,19 @@ object AppGlobals {
     var deviceRole by mutableStateOf(DeviceRole.PRIMARY)
         private set // Setter is private, use updateDeviceRole
 
-    // --- User Profile State ---
-    var userProfile by mutableStateOf(UserProfile()) // Initialize with default UserProfile
+    var userProfile by mutableStateOf(UserProfile())
         private set // Setter is private, use updateUserProfile
 
-    // --- Device Identifier ---
     var appDeviceID: String? = null
         private set // Loaded during initialization
 
-    // --- Sync Settings ---
-    var performAutoSync by mutableStateOf(true) // Default to true
+    var performAutoSync by mutableStateOf(true)
         private set // Setter is private, use updatePerformAutoSync
+
+    // --- Bottom Navigation Customization ---
+    // Stores the routes of items the user wants to see.
+    var visibleBottomNavRoutes by mutableStateOf<Set<String>>(emptySet())
+        private set // Setter is private, use updateVisibleBottomNavRoutes
 
     // --- SharedPreferences related ---
     const val PREFS_NAME = "AppPrefs"
@@ -60,9 +101,12 @@ object AppGlobals {
     private const val KEY_USER_DOB = "user_dob_iso_zoned"
     private const val KEY_USER_HEIGHT_CM = "user_height_cm"
     private const val KEY_APP_DEVICE_ID = "app_device_id_hex8"
-    private const val KEY_PERFORM_AUTO_SYNC = "perform_auto_sync" // New key
+    private const val KEY_PERFORM_AUTO_SYNC = "perform_auto_sync"
+    private const val KEY_VISIBLE_BOTTOM_NAV_ROUTES =
+        "visible_bottom_nav_routes" // Key for storing visible routes
 
     private var sharedPreferencesInstance: SharedPreferences? = null
+    private val gson = Gson() // For serializing/deserializing Set<String>
 
     private fun getPrefs(context: Context): SharedPreferences {
         if (sharedPreferencesInstance == null) {
@@ -73,11 +117,14 @@ object AppGlobals {
     }
 
     fun initialize(context: Context) {
+        Log.d("AppGlobals", "Initialization started.")
         loadDeviceRole(context)
         loadEnergyUnit(context)
         loadUserProfile(context)
         loadOrGenerateAppDeviceID(context)
-        loadPerformAutoSync(context) // Load the new sync preference
+        loadPerformAutoSync(context)
+        loadVisibleBottomNavRoutes(context) // Load the new preference for bottom nav items
+        Log.d("AppGlobals", "Initialization complete.")
     }
 
     private fun loadDeviceRole(context: Context) {
@@ -88,11 +135,13 @@ object AppGlobals {
         } catch (e: IllegalArgumentException) {
             DeviceRole.PRIMARY
         }
+        Log.d("AppGlobals", "Loaded DeviceRole: $deviceRole")
     }
 
     fun updateDeviceRole(context: Context, newRole: DeviceRole) {
         deviceRole = newRole
         getPrefs(context).edit().putString(KEY_DEVICE_ROLE, newRole.name).apply()
+        Log.d("AppGlobals", "Updated DeviceRole to: $newRole")
     }
 
     private fun loadEnergyUnit(context: Context) {
@@ -103,36 +152,35 @@ object AppGlobals {
         } catch (e: IllegalArgumentException) {
             EnergyUnit.KCAL
         }
+        Log.d("AppGlobals", "Loaded EnergyUnitPreference: $energyUnitPreference")
     }
 
     fun updateEnergyUnit(context: Context, newUnit: EnergyUnit) {
         energyUnitPreference = newUnit
         getPrefs(context).edit().putString(KEY_ENERGY_UNIT, newUnit.name).apply()
+        Log.d("AppGlobals", "Updated EnergyUnitPreference to: $newUnit")
     }
 
     private fun loadUserProfile(context: Context) {
         val prefs = getPrefs(context)
-        val genderString =
-            prefs.getString(KEY_USER_GENDER, Gender.PREFER_NOT_TO_SAY.name)
+        val genderString = prefs.getString(KEY_USER_GENDER, Gender.PREFER_NOT_TO_SAY.name)
         val dobString = prefs.getString(KEY_USER_DOB, null)
-        val heightCm =
-            prefs.getFloat(KEY_USER_HEIGHT_CM, 0f).toDouble().takeIf { it > 0 }
+        val heightCm = prefs.getFloat(KEY_USER_HEIGHT_CM, 0f).toDouble().takeIf { it > 0 }
 
         val gender = try {
             Gender.valueOf(genderString ?: Gender.PREFER_NOT_TO_SAY.name)
         } catch (e: IllegalArgumentException) {
             Gender.PREFER_NOT_TO_SAY
         }
-
         val dateOfBirth = dobString?.let {
             try {
                 ZonedDateTime.parse(it, DateTimeFormatter.ISO_ZONED_DATE_TIME)
             } catch (e: DateTimeParseException) {
-                Log.w("AppGlobals", "Could not parse stored date of birth: $it", e)
-                null
+                Log.w("AppGlobals", "Could not parse stored DoB: $it", e); null
             }
         }
         userProfile = UserProfile(gender, dateOfBirth, heightCm)
+        Log.d("AppGlobals", "Loaded UserProfile: $userProfile")
     }
 
     fun updateUserProfile(context: Context, updatedProfile: UserProfile) {
@@ -145,18 +193,19 @@ object AppGlobals {
                     it.format(DateTimeFormatter.ISO_ZONED_DATE_TIME)
                 )
             } ?: remove(KEY_USER_DOB)
-            updatedProfile.heightCm?.let { putFloat(KEY_USER_HEIGHT_CM, it.toFloat()) }
-                ?: remove(KEY_USER_HEIGHT_CM)
+            updatedProfile.heightCm?.let { putFloat(KEY_USER_HEIGHT_CM, it.toFloat()) } ?: remove(
+                KEY_USER_HEIGHT_CM
+            )
             apply()
         }
+        Log.d("AppGlobals", "Updated UserProfile to: $updatedProfile")
     }
 
     private fun loadOrGenerateAppDeviceID(context: Context) {
         val prefs = getPrefs(context)
         var deviceId = prefs.getString(KEY_APP_DEVICE_ID, null)
         if (deviceId == null) {
-            deviceId = UUID.randomUUID().toString().substring(0, 8)
-            prefs.edit().putString(KEY_APP_DEVICE_ID, deviceId).apply()
+            deviceId = generateNewAppDeviceID(prefs) // Call private fun to generate and save
             Log.d("AppGlobals", "Generated new AppDeviceID: $deviceId")
         } else {
             Log.d("AppGlobals", "Loaded existing AppDeviceID: $deviceId")
@@ -164,39 +213,135 @@ object AppGlobals {
         appDeviceID = deviceId
     }
 
+    // Made public for potential use if user wants to explicitly regenerate ID (e.g., for privacy reset)
+    fun regenerateAppDeviceID(context: Context) {
+        val newId = generateNewAppDeviceID(getPrefs(context))
+        appDeviceID = newId
+        Log.d("AppGlobals", "Regenerated AppDeviceID: $newId")
+    }
+
+    private fun generateNewAppDeviceID(prefs: SharedPreferences): String {
+        val newId = UUID.randomUUID().toString().substring(0, 8).uppercase(Locale.ROOT)
+        prefs.edit().putString(KEY_APP_DEVICE_ID, newId).apply()
+        return newId
+    }
+
     private fun loadPerformAutoSync(context: Context) {
         val prefs = getPrefs(context)
-        performAutoSync = prefs.getBoolean(KEY_PERFORM_AUTO_SYNC, true) // Default to true
-        Log.d("AppGlobals", "Loaded PerformAutoSync setting: $performAutoSync")
+        performAutoSync = prefs.getBoolean(KEY_PERFORM_AUTO_SYNC, true)
+        Log.d("AppGlobals", "Loaded PerformAutoSync: $performAutoSync")
     }
 
     fun updatePerformAutoSync(context: Context, newValue: Boolean) {
         performAutoSync = newValue
         getPrefs(context).edit().putBoolean(KEY_PERFORM_AUTO_SYNC, newValue).apply()
-        Log.d("AppGlobals", "Updated PerformAutoSync setting to: $newValue")
+        Log.d("AppGlobals", "Updated PerformAutoSync to: $newValue")
     }
 
+    // --- Bottom Navigation Preferences ---
+    private fun loadVisibleBottomNavRoutes(context: Context) {
+        val prefs = getPrefs(context)
+        val jsonString = prefs.getString(KEY_VISIBLE_BOTTOM_NAV_ROUTES, null)
+        val defaultCoreRoutes = BottomNavItemInfo.getAllItems()
+            .filter { it.isCoreFeature }
+            .map { it.route }
+            .toSet()
 
-    // Helper function to convert string date to LocalDate
+        if (jsonString != null) {
+            val type = object : TypeToken<Set<String>>() {}.type
+            try {
+                val loadedRoutes: Set<String> = gson.fromJson(jsonString, type)
+                // Ensure core features are always present. If loaded set is empty or missing core, start with core.
+                if (loadedRoutes.isEmpty() || !loadedRoutes.containsAll(defaultCoreRoutes)) {
+                    visibleBottomNavRoutes = BottomNavItemInfo.getAllItems().map { it.route }
+                        .toSet() // Default to all if corrupted
+                    Log.w(
+                        "AppGlobals",
+                        "Loaded visible routes were problematic, defaulting to all items."
+                    )
+                    // Persist this corrected default
+                    updateVisibleBottomNavRoutes(context, visibleBottomNavRoutes)
+                } else {
+                    visibleBottomNavRoutes = loadedRoutes
+                    Log.d("AppGlobals", "Loaded visible bottom nav routes: $visibleBottomNavRoutes")
+                }
+            } catch (e: Exception) { // Catches JsonSyntaxException and others
+                Log.e(
+                    "AppGlobals",
+                    "Error loading visible bottom nav routes from JSON, defaulting to all items.",
+                    e
+                )
+                visibleBottomNavRoutes = BottomNavItemInfo.getAllItems().map { it.route }.toSet()
+                updateVisibleBottomNavRoutes(context, visibleBottomNavRoutes) // Persist default
+            }
+        } else {
+            // No preference saved (e.g., first launch). Default to showing all items.
+            visibleBottomNavRoutes = BottomNavItemInfo.getAllItems().map { it.route }.toSet()
+            Log.d(
+                "AppGlobals",
+                "No saved bottom nav routes, defaulting to all items: $visibleBottomNavRoutes"
+            )
+            updateVisibleBottomNavRoutes(context, visibleBottomNavRoutes) // Save this default
+        }
+    }
+
+    fun updateVisibleBottomNavRoutes(context: Context, newVisibleRoutesUserChoice: Set<String>) {
+        val coreRoutes = BottomNavItemInfo.getAllItems()
+            .filter { it.isCoreFeature }
+            .map { it.route }
+            .toSet()
+        // Ensure core features are always included, regardless of user choice for them.
+        val finalRoutesToShow = newVisibleRoutesUserChoice.union(coreRoutes)
+
+        if (visibleBottomNavRoutes != finalRoutesToShow) { // Only update if there's an actual change
+            visibleBottomNavRoutes = finalRoutesToShow
+            val jsonString = gson.toJson(finalRoutesToShow)
+            getPrefs(context).edit().putString(KEY_VISIBLE_BOTTOM_NAV_ROUTES, jsonString).apply()
+            Log.d(
+                "AppGlobals",
+                "Updated and saved visible bottom nav routes to: $finalRoutesToShow"
+            )
+        } else {
+            Log.d(
+                "AppGlobals",
+                "No change in visible bottom nav routes, not saving. Current: $visibleBottomNavRoutes"
+            )
+        }
+    }
+
+    // Helper to get the actual BottomNavItemInfo objects to display based on visible routes
+    fun getCurrentlyVisibleBottomNavItems(): List<BottomNavItemInfo> {
+        val allItemsInOrder = BottomNavItemInfo.getAllItems()
+        // Filter based on the routes stored in visibleBottomNavRoutes, maintaining original order
+        return allItemsInOrder.filter { it.route in visibleBottomNavRoutes }
+    }
+
+    // --- Date Helpers ---
     fun getCurrentDayAsLocalDate(): LocalDate {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        return sdf.parse(currentDay)?.let {
-            it.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
-        } ?: LocalDate.now() // Default to today's date if parsing fails
+        return try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(currentDay)?.toInstant()
+                ?.atZone(ZoneId.systemDefault())?.toLocalDate() ?: LocalDate.now()
+        } catch (e: Exception) {
+            Log.e("AppGlobals", "Error parsing currentDay: $currentDay", e)
+            LocalDate.now()
+        }
     }
 
-    // Helper function to convert string date to LocalDate
     fun getOpenedDayAsLocalDate(): LocalDate {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        return sdf.parse(openedDay)?.let {
-            it.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
-        } ?: LocalDate.now() // Default to today's date if parsing fails
+        return try {
+            SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(openedDay)?.toInstant()
+                ?.atZone(ZoneId.systemDefault())?.toLocalDate() ?: LocalDate.now()
+        } catch (e: Exception) {
+            Log.e("AppGlobals", "Error parsing openedDay: $openedDay", e)
+            LocalDate.now()
+        }
     }
 
-    // Helper function to convert LocalDate to string
     fun setOpenedDayFromLocalDate(localDate: LocalDate) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        openedDay = sdf.format(Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant()))
+        openedDay = SimpleDateFormat(
+            "yyyy-MM-dd",
+            Locale.getDefault()
+        ).format(Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant()))
     }
 
     fun getUtcTimestampForFileName(): String {
@@ -206,21 +351,13 @@ object AppGlobals {
     }
 
     fun getUtcTimestamp(): String {
-        val sdf = SimpleDateFormat("yyyyMMddHHmmss", Locale.getDefault())
+        // Kept the old name, but it's not really a timestamp in the common sense (seconds from epoch)
+        // It's a formatted string. Consider renaming if it causes confusion.
+        val sdf = SimpleDateFormat(
+            "yyyyMMddHHmmss",
+            Locale.US
+        ) // Using US Locale for consistency if this is for filenames/internal IDs
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         return sdf.format(Date())
-    }
-
-    fun regenerateAppDeviceID(context: Context) {
-        val prefs = getPrefs(context)
-        val newId = generateNewAppDeviceID(prefs)
-        appDeviceID = newId
-        Log.d("AppGlobals", "Regenerated AppDeviceID: $newId")
-    }
-
-    private fun generateNewAppDeviceID(prefs: SharedPreferences): String {
-        val newId = UUID.randomUUID().toString().substring(0, 8)
-        prefs.edit().putString(KEY_APP_DEVICE_ID, newId).apply()
-        return newId
     }
 }

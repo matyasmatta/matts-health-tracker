@@ -99,35 +99,39 @@ import androidx.lifecycle.ViewModelProvider
 import java.time.Duration
 
 
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // It's best practice to call AppGlobals.initialize() in your Application class's onCreate.
+        // If you haven't done that, you could do it here, but Application class is preferred
+        // for objects that need context early and throughout the app lifecycle.
+        // AppGlobals.initialize(applicationContext) // UNCOMMENT IF NOT DONE IN APPLICATION CLASS
+
         setContent {
             MattsHealthTrackerTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // var openedDay by rememberSaveable { mutableStateOf(AppGlobals.currentDay) } // This seems to be managed within HealthTrackerApp now
                     var signedInAccount by rememberSaveable { mutableStateOf<GoogleSignInAccount?>(null) }
-                    val context = LocalContext.current // Get context once for LaunchedEffect
+                    val context = LocalContext.current
 
-                    // Function to update signedInAccount state in MainActivity and potentially trigger UI changes
                     val onSignedInAccountChange: (GoogleSignInAccount?) -> Unit = { account ->
                         signedInAccount = account
                         if (account == null) {
-                            // Handle sign-out logic if needed here, e.g., clear user-specific data
                             Log.d("MainActivity", "User signed out or account became null.")
                         }
                     }
 
-                    LaunchedEffect(Unit) { // Runs once when MainActivity enters the composition
+                    LaunchedEffect(Unit) {
                         Log.d(
                             "MainActivity",
                             "LaunchedEffect started. Checking for existing Google Sign-in."
                         )
                         val existingAccount = GoogleDriveUtils.getExistingAccount(context)
-                        signedInAccount = existingAccount // Update the state immediately
+                        signedInAccount = existingAccount
 
                         if (existingAccount != null) {
                             Log.i(
@@ -135,29 +139,20 @@ class MainActivity : ComponentActivity() {
                                 "Existing Google Sign-in found: ${existingAccount.email}"
                             )
                             if (AppGlobals.performAutoSync) {
-                                // --- 1. Attempt to Sync from Remote (if newer foreign data exists) ---
-                                // This should happen BEFORE any local database operations or backups if it involves restore
                                 Log.i("MainActivity", "Attempting sync on app launch...")
-                                val syncManager =
-                                    Sync(context) // Create instance of your Sync class
+                                val syncManager = Sync(context)
                                 try {
-                                    syncManager.syncOnAppLaunch() // This is a suspend function
+                                    syncManager.syncOnAppLaunch()
                                     Log.i("MainActivity", "Sync on app launch process completed.")
-                                    // At this point, if a restore happened, the local databases are updated.
                                 } catch (e: Exception) {
                                     Log.e("MainActivity", "Error during syncOnAppLaunch", e)
-                                    // Optionally show a non-intrusive error to the user or log for analytics
-                                    // Toast.makeText(context, "Sync check failed.", Toast.LENGTH_SHORT).show()
                                 }
 
-                                // --- 2. After potential sync/restore, perform the local backup ---
-                                // This will now back up the potentially updated state.
                                 Log.i(
                                     "MainActivity",
                                     "Proceeding with automatic data export/backup to Drive."
                                 )
                                 try {
-                                    // Assuming exportDataToCSVZip is suspend or handles its own threading
                                     GoogleDriveUtils.exportDataToCSVZip(
                                         context,
                                         Uri.EMPTY,
@@ -176,33 +171,18 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         } else {
-                            Log.i(
-                                "MainActivity",
-                                "No existing Google Sign-in found on startup. User needs to sign in for cloud features."
-                            )
-                            // Optionally prompt user to sign in or guide them to the sign-in option
+                            Log.i("MainActivity", "No existing Google Sign-in found on startup.")
                         }
-                        // Database initialization (e.g. Room) should happen AFTER this LaunchedEffect
-                        // or be robust enough to handle re-initialization if a restore occurred.
                     }
 
-                    // Call HealthTrackerApp and pass necessary values
-                    // HealthTrackerApp will then use the 'signedInAccount' state
                     HealthTrackerApp(
                         currentSignedInAccount = signedInAccount,
-                        onSignedInAccountChange = onSignedInAccountChange // Pass the callback to update the account state
+                        onSignedInAccountChange = onSignedInAccountChange
                     )
                 }
             }
         }
     }
-}
-sealed class BottomNavItem(val route: String, val label: String, val icon: ImageVector) {
-    object AddData : BottomNavItem("add_data", "Tracking", Icons.Default.MonitorHeart)
-    object Statistics: BottomNavItem("statistics", "Statistics", Icons.Default.QueryStats)
-    object Food : BottomNavItem("food", "Food", Icons.Default.Restaurant) // NEW: Food Tab
-    object Exercises : BottomNavItem("exercises", "Routines", Icons.Default.FitnessCenter)
-    object MedicationTracking : BottomNavItem("medication_tracking", "Meds", Icons.Default.Medication)
 }
 
 @Composable
@@ -210,58 +190,100 @@ fun HealthTrackerApp(
     currentSignedInAccount: GoogleSignInAccount?,
     onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
 ) {
-    var currentScreen by remember { mutableStateOf<BottomNavItem>(BottomNavItem.AddData) }
+    // Get the list of items to display from AppGlobals
+    val visibleNavItems = remember { AppGlobals.getCurrentlyVisibleBottomNavItems() }
+
+    // Default to the first visible item, or a specific core item if the list could be empty initially
+    // (though AppGlobals defaults to all, so visibleNavItems should not be empty)
+    val initialScreen = visibleNavItems.firstOrNull()
+        ?: BottomNavItemInfo.AddData // Fallback to AddData if list is somehow empty
+
+    var currentScreen by remember { mutableStateOf<BottomNavItemInfo>(initialScreen) }
     var openedDay by remember { mutableStateOf(AppGlobals.openedDay) }
 
-    Log.d("HealthTrackerApp", "Recomposing HealthTrackerApp: openedDay=$openedDay")
+    // This effect ensures that if the visibleNavItems change (e.g., user changes settings
+    // and comes back), and the currentScreen is no longer in the visible list,
+    // we reset currentScreen to a valid visible item.
+    LaunchedEffect(visibleNavItems) {
+        if (currentScreen !in visibleNavItems && visibleNavItems.isNotEmpty()) {
+            currentScreen = visibleNavItems.first()
+            Log.d(
+                "HealthTrackerApp",
+                "Current screen was hidden, defaulted to ${currentScreen.route}"
+            )
+        } else if (visibleNavItems.isEmpty()) {
+            // Handle the edge case where no items are visible (should be prevented by AppGlobals logic)
+            Log.e("HealthTrackerApp", "No visible bottom navigation items configured!")
+            // Optionally, navigate to a default/error screen or show a message
+        }
+    }
+
+
+    Log.d(
+        "HealthTrackerApp",
+        "Recomposing HealthTrackerApp: openedDay=$openedDay, currentScreen=${currentScreen.route}, visibleItems=${visibleNavItems.map { it.route }}"
+    )
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                listOf(
-                    BottomNavItem.AddData,
-                    BottomNavItem.Statistics,
-                    BottomNavItem.Exercises,
-                    BottomNavItem.MedicationTracking,
-                    BottomNavItem.Food // NEW: Include Food in the list
-                ).forEach { item ->
-                    NavigationBarItem(
-                        icon = { Icon(imageVector = item.icon, contentDescription = item.label) },
-                        label = { Text(item.label) },
-                        selected = currentScreen == item,
-                        onClick = {
-                            Log.d("HealthTrackerApp", "Switching to screen: ${item.label}")
-                            currentScreen = item
-                        }
-                    )
+            if (visibleNavItems.isNotEmpty()) { // Only show bottom bar if there are items to display
+                NavigationBar {
+                    visibleNavItems.forEach { itemInfo -> // Use itemInfo from AppGlobals
+                        NavigationBarItem(
+                            icon = {
+                                Icon(
+                                    imageVector = itemInfo.defaultIcon,
+                                    contentDescription = itemInfo.defaultLabel
+                                )
+                            },
+                            label = { Text(itemInfo.defaultLabel) },
+                            selected = currentScreen.route == itemInfo.route, // Compare routes for selection
+                            onClick = {
+                                Log.d(
+                                    "HealthTrackerApp",
+                                    "Switching to screen: ${itemInfo.defaultLabel}"
+                                )
+                                currentScreen = itemInfo
+                            }
+                        )
+                    }
                 }
             }
         }
     ) { innerPadding ->
-        // Main content area
-        Column(modifier = Modifier
-            .fillMaxSize()
-            .padding(innerPadding)) {
-
-            // DateNavigationBar and SettingsDialog should be inside the Column and above the main content area
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
             DateNavigationBar(
                 openedDay = openedDay,
                 onDateChange = { newDate ->
                     openedDay = newDate
-                    AppGlobals.openedDay = newDate // Update the global helper for consistency
+                    AppGlobals.openedDay = newDate
                 },
                 currentSignedInAccount = currentSignedInAccount,
                 onSignedInAccountChange = onSignedInAccountChange
             )
 
-            // Content based on the currentScreen
             Box(modifier = Modifier.fillMaxSize()) {
-                when (currentScreen) {
-                    is BottomNavItem.AddData -> HealthTrackerScreen(openedDay)
-                    is BottomNavItem.Statistics -> StatisticsScreen(openedDay)
-                    is BottomNavItem.Food -> FoodScreen(openedDay) // NEW: Display FoodScreen
-                    is BottomNavItem.Exercises -> ExercisesScreen(openedDay)
-                    is BottomNavItem.MedicationTracking -> MedicationScreen(openedDay)
+                // Use currentScreen.route for when conditions
+                when (currentScreen.route) {
+                    BottomNavItemInfo.AddData.route -> HealthTrackerScreen(openedDay)
+                    BottomNavItemInfo.Statistics.route -> StatisticsScreen(openedDay)
+                    BottomNavItemInfo.Food.route -> FoodScreen(openedDay)
+                    BottomNavItemInfo.Exercises.route -> ExercisesScreen(openedDay)
+                    BottomNavItemInfo.MedicationTracking.route -> MedicationScreen(openedDay)
+                    // Add cases for any other items you might have
+                    else -> {
+                        // Fallback screen if the route is somehow unknown
+                        // This shouldn't happen if currentScreen is always set from visibleNavItems
+                        Text("Screen not found for route: ${currentScreen.route}")
+                        Log.e(
+                            "HealthTrackerApp",
+                            "Unknown route for currentScreen: ${currentScreen.route}"
+                        )
+                    }
                 }
             }
         }
