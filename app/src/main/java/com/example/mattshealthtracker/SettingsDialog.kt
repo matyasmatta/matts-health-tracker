@@ -29,6 +29,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.google.android.gms.auth.api.signin.GoogleSignIn
@@ -59,6 +60,7 @@ fun SettingsDialog(
 
     var showHealthConnectDialog by remember { mutableStateOf(false) }
     var showUserProfileDialog by remember { mutableStateOf(false) }
+    var showToggleFeaturesDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val syncManager = remember { Sync(context) }
 
@@ -202,7 +204,10 @@ fun SettingsDialog(
                     context = context,
                     currentEnergyUnit = currentEnergyUnit,
                     currentDeviceRole = currentDeviceRole,
-                    onIconClick = displayInfoDialog
+                    onIconClick = displayInfoDialog,
+                    onShowToggleFeaturesDialog = { // <<<< PASS THE LAMBDA TO SET STATE
+                        showToggleFeaturesDialog = true
+                    }
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
@@ -262,6 +267,7 @@ fun SettingsDialog(
                         exportToDeviceLauncher.launch("mht-backup-$timestamp.zip")
                     },
                     onIconClick = displayInfoDialog
+
                 )
 
                 // ... (Rest of your Dialog content: Health Connect, AppInfoSection, Close button, etc.) ...
@@ -352,6 +358,14 @@ fun SettingsDialog(
     if (showHealthConnectDialog) {
         HealthConnectDialog(onDismissRequest = { showHealthConnectDialog = false })
     }
+
+    if (showToggleFeaturesDialog) {
+        ToggleFeaturesDialog(
+            onDismissRequest = { showToggleFeaturesDialog = false },
+            appGlobals = AppGlobals, // Pass AppGlobals directly
+            context = context       // Pass the LocalContext.current
+        )
+    }
 }
 
 // --- Section Composables ---
@@ -421,7 +435,8 @@ private fun PreferencesSection(
     context: Context,
     currentEnergyUnit: EnergyUnit,
     currentDeviceRole: DeviceRole,
-    onIconClick: (title: String, message: String) -> Unit
+    onIconClick: (title: String, message: String) -> Unit,
+    onShowToggleFeaturesDialog: () -> Unit // <<<< ADD THIS CALLBACK PARAMETER
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -432,6 +447,20 @@ private fun PreferencesSection(
         val formattedEnergyUnitName = when (currentEnergyUnit) {
             EnergyUnit.KCAL -> "kcal"; EnergyUnit.KJ -> "kJ"
         }
+
+        SettingsButton(
+            icon = Icons.Filled.BackHand,
+            text = "Toggle Features",
+            onClick = {
+                onShowToggleFeaturesDialog()
+            }, enabled = true,
+            onInfoClick = {
+                onIconClick(
+                    "Edit features",
+                    "Allows you to reorder and toggle features present on the bottom navigation bar."
+                )
+            }
+        )
 
         SettingSwitchRow(
             icon = Icons.Filled.LocalFireDepartment,
@@ -484,6 +513,117 @@ private fun PreferencesSection(
         )
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class) // For AlertDialog
+@Composable
+fun ToggleFeaturesDialog(
+    onDismissRequest: () -> Unit,
+    appGlobals: AppGlobals, // Pass AppGlobals to access its state and methods
+    context: Context // Needed to update AppGlobals preferences
+) {
+    // Get all possible bottom navigation items
+    val allNavItems = remember { BottomNavItemInfo.getAllItems() }
+
+    // Observe the currently visible routes from AppGlobals.
+    // This makes the dialog reactive to changes if they happen elsewhere,
+    // though typically changes will originate from this dialog itself.
+    // Using remember with appGlobals.visibleBottomNavRoutes as a key
+    // will re-initialize tempSelectedRoutes if currentVisibleRoutes changes externally.
+    var tempSelectedRoutes by remember(appGlobals.visibleBottomNavRoutes) {
+        mutableStateOf(appGlobals.visibleBottomNavRoutes)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Customize Features") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Select the features you want to see on the bottom navigation bar.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                allNavItems.forEach { itemInfo ->
+                    val isChecked = itemInfo.route in tempSelectedRoutes
+                    val canToggle = !itemInfo.isCoreFeature
+
+                    // Common logic for updating selection
+                    val updateSelection = { newCheckedState: Boolean ->
+                        if (canToggle) { // Double check canToggle here too
+                            val newSelected = tempSelectedRoutes.toMutableSet()
+                            if (newCheckedState) { // If the new state is to be checked
+                                newSelected.add(itemInfo.route)
+                            } else {
+                                newSelected.remove(itemInfo.route)
+                            }
+                            tempSelectedRoutes = newSelected
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                enabled = canToggle,
+                                onClick = {
+                                    // Toggle the current state
+                                    updateSelection(!isChecked)
+                                }
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = itemInfo.defaultIcon,
+                            contentDescription = itemInfo.defaultLabel,
+                            modifier = Modifier.size(24.dp),
+                            tint = if (isChecked || itemInfo.isCoreFeature) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            text = itemInfo.defaultLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = isChecked,
+                            onCheckedChange = { newCheckedState ->
+                                // ***** THIS IS THE FIX *****
+                                // Update tempSelectedRoutes when the switch itself is changed
+                                updateSelection(newCheckedState)
+                            },
+                            enabled = canToggle,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                            )
+                        )
+                    }
+                    if (itemInfo != allNavItems.last()) {
+                        Divider(modifier = Modifier.padding(start = 40.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    appGlobals.updateVisibleBottomNavRoutes(context, tempSelectedRoutes)
+                    onDismissRequest()
+                }
+            ) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 
 @Composable
 private fun DataManagementSection(
@@ -912,7 +1052,7 @@ private fun SettingsButton(
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
         Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-        Text(text, modifier = Modifier.weight(1f))
+        Text(text, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
 
         if (onInfoClick != null) {
             Spacer(Modifier.size(ButtonDefaults.IconSpacing))

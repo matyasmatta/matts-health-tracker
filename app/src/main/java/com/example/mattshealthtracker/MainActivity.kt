@@ -191,7 +191,9 @@ fun HealthTrackerApp(
     onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
 ) {
     // Get the list of items to display from AppGlobals
-    val visibleNavItems = remember { AppGlobals.getCurrentlyVisibleBottomNavItems() }
+    val visibleNavItems = remember(AppGlobals.visibleBottomNavRoutes) {
+        AppGlobals.getCurrentlyVisibleBottomNavItems()
+    }
 
     // Default to the first visible item, or a specific core item if the list could be empty initially
     // (though AppGlobals defaults to all, so visibleNavItems should not be empty)

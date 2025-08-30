@@ -1,38 +1,54 @@
 package com.example.mattshealthtracker
 
+import android.content.Context
 import android.util.Log
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,11 +66,16 @@ enum class CategoryContext {
     NONE        // No additional context displayed
 }
 
+@OptIn(ExperimentalMaterial3Api::class) // For TopAppBar
 @Composable
 fun ExercisesScreen(openedDay: String) {
     val context = LocalContext.current
     val exerciseDbHelper = remember { ExerciseDatabaseHelper(context) }
     val routineDbHelper = remember { RoutineDatabaseHelper(context) }
+
+    var showCustomizeSectionsDialog by remember { mutableStateOf(false) }
+    val visibleSectionIdsFromAppGlobals by rememberUpdatedState(AppGlobals.visibleExerciseSectionIds)
+
     DisposableEffect(Unit) {
         onDispose {
             exerciseDbHelper.close()
@@ -62,58 +83,56 @@ fun ExercisesScreen(openedDay: String) {
         }
     }
 
-    // Existing exercise data for Push-ups and Posture Corrections
-    // Fetch all exercise data for the openedDay
-    val exerciseData = remember(openedDay) {
+    val exerciseData = remember(openedDay, visibleSectionIdsFromAppGlobals) {
+        Log.d("ExercisesScreen", "Fetching exerciseData for $openedDay")
         exerciseDbHelper.fetchExerciseDataForDate(openedDay) ?: ExerciseData(
-            currentDate = openedDay,
-            pushups = 0,
-            posture = 0,
-            relaxMinutes = 0, // Initialize with defaults for new day
-            sleepMinutes = 0,
-            napMinutes = 0,
-            focusMinutes = 0
+            currentDate = openedDay, pushups = 0, posture = 0,
+            relaxMinutes = 0, sleepMinutes = 0, napMinutes = 0, focusMinutes = 0
         )
     }
 
-    var pushUps by remember(openedDay) { mutableStateOf(exerciseData.pushups) }
-    var postureCorrections by remember(openedDay) { mutableStateOf(exerciseData.posture) }
+    var pushUps by remember(exerciseData) { mutableStateOf(exerciseData.pushups) }
+    var postureCorrections by remember(exerciseData) { mutableStateOf(exerciseData.posture) }
+    var relaxMinutes by rememberSaveable(
+        exerciseData.relaxMinutes,
+        key = "relax_$openedDay"
+    ) { mutableStateOf(exerciseData.relaxMinutes) }
+    var sleepMinutes by rememberSaveable(
+        exerciseData.sleepMinutes,
+        key = "sleep_$openedDay"
+    ) { mutableStateOf(exerciseData.sleepMinutes) }
+    var napMinutes by rememberSaveable(
+        exerciseData.napMinutes,
+        key = "nap_$openedDay"
+    ) { mutableStateOf(exerciseData.napMinutes) }
+    var focusMinutes by rememberSaveable(
+        exerciseData.focusMinutes,
+        key = "focus_$openedDay"
+    ) { mutableStateOf(exerciseData.focusMinutes) }
 
-    // New state variables for Breathing exercises, initialized from fetched data
-    var relaxMinutes by rememberSaveable(openedDay) { mutableStateOf(exerciseData.relaxMinutes) }
-    var sleepMinutes by rememberSaveable(openedDay) { mutableStateOf(exerciseData.sleepMinutes) }
-    var napMinutes by rememberSaveable(openedDay) { mutableStateOf(exerciseData.napMinutes) }
-    var focusMinutes by rememberSaveable(openedDay) { mutableStateOf(exerciseData.focusMinutes) }
-
-
-    // Fetch routine data
-    val routineData = remember(openedDay) {
+    val routineRawData = remember(openedDay, visibleSectionIdsFromAppGlobals) {
+        Log.d("ExercisesScreen", "Fetching routineData for $openedDay")
         routineDbHelper.getRoutineDataForDate(openedDay)
     }
+    val morningChecks =
+        remember(routineRawData) { mutableStateOf(routineRawData["am"] ?: emptyMap()) }
+    val eveningChecks =
+        remember(routineRawData) { mutableStateOf(routineRawData["pm"] ?: emptyMap()) }
 
-    // State to hold the checked states, initialized with data from the database
-    val morningChecks = remember(openedDay) { mutableStateOf(routineData["am"] ?: emptyMap()) }
-    val eveningChecks = remember(openedDay) { mutableStateOf(routineData["pm"] ?: emptyMap()) }
-
-    // Single function to update ALL exercise data
     fun updateExerciseData() {
-        exerciseDbHelper.insertOrUpdateData(
-            ExerciseData(
-                currentDate = openedDay,
-                pushups = pushUps,
-                posture = postureCorrections,
-                relaxMinutes = relaxMinutes,
-                sleepMinutes = sleepMinutes,
-                napMinutes = napMinutes,
-                focusMinutes = focusMinutes
-            )
+        val currentExerciseData = ExerciseData(
+            currentDate = openedDay,
+            pushups = pushUps,
+            posture = postureCorrections,
+            relaxMinutes = relaxMinutes,
+            sleepMinutes = sleepMinutes,
+            napMinutes = napMinutes,
+            focusMinutes = focusMinutes
         )
-        Log.d("ExercisesScreen", "Updated exercise data: Pushups=$pushUps, Posture=$postureCorrections, " +
-                "Relax=${relaxMinutes}, Sleep=${sleepMinutes}, Nap=${napMinutes}, Focus=${focusMinutes}")
-        // exerciseDbHelper.exportToCSV(context) // Consider when and how often to export
+        exerciseDbHelper.insertOrUpdateData(currentExerciseData)
+        Log.d("ExercisesScreen", "Updated exercise data: $currentExerciseData")
     }
 
-    // Function to update routine data in the database
     fun updateRoutineData() {
         val dataToSave = mapOf(
             "am" to morningChecks.value,
@@ -121,109 +140,254 @@ fun ExercisesScreen(openedDay: String) {
         )
         routineDbHelper.insertOrUpdateRoutineData(openedDay, dataToSave)
         Log.d("ExercisesScreen", "Updated routine data for $openedDay: $dataToSave")
-        // routineDbHelper.exportToCSV(context) // Consider when and how often to export
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Basic Exercises Section
-        BasicExercisesSection(
-            pushUps = pushUps,
-            onPushUpsIncrement = {
-                pushUps += 5
-                updateExerciseData() // Call the unified update function
-            },
-            onPushUpsDecrement = {
-                if (pushUps > 0) {
-                    pushUps--
-                    updateExerciseData() // Call the unified update function
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Routines and Exercises") }, // Your desired title
+                actions = {
+                    IconButton(onClick = { showCustomizeSectionsDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Customize Exercise Sections"
+                        )
+                    }
                 }
-            },
-            postureCorrections = postureCorrections,
-            onPostureCorrectionsIncrement = {
-                postureCorrections++
-                updateExerciseData() // Call the unified update function
-            },
-            onPostureCorrectionsDecrement = {
-                if (postureCorrections > 0) {
-                    postureCorrections--
-                    updateExerciseData() // Call the unified update function
-                }
+            )
+        }
+    ) { paddingValues -> // Content lambda for Scaffold, provides paddingValues
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues) // Apply padding from the Scaffold
+                .padding(horizontal = 16.dp, vertical = 16.dp) // Your additional content padding
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            var sectionsRendered = 0
+
+            if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Basics.id)) {
+                BasicExercisesSection(
+                    pushUps = pushUps,
+                    onPushUpsIncrement = { pushUps += 5; updateExerciseData() },
+                    onPushUpsDecrement = {
+                        if (pushUps > 0) {
+                            pushUps--; updateExerciseData()
+                        }
+                    },
+                    postureCorrections = postureCorrections,
+                    onPostureCorrectionsIncrement = { postureCorrections++; updateExerciseData() },
+                    onPostureCorrectionsDecrement = {
+                        if (postureCorrections > 0) {
+                            postureCorrections--; updateExerciseData()
+                        }
+                    }
+                )
+                sectionsRendered++
             }
-        )
 
-        //Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-        // New Breathing Section
-        BreathingSection(
-            relaxMinutes = relaxMinutes,
-            onRelaxIncrement = {
-                relaxMinutes++
-                updateExerciseData() // Call the unified update function
-            },
-            onRelaxDecrement = {
-                if (relaxMinutes > 0) {
-                    relaxMinutes--
-                    updateExerciseData() // Call the unified update function
+            if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Breathing.id)) {
+                if (sectionsRendered > 0 && AppGlobals.isExerciseSectionVisible(
+                        ExerciseScreenSectionInfo.Basics.id
+                    )
+                ) {
+                    // Optional: Add divider if both Basics and Breathing are visible and Basics was rendered first
+                    // Or manage dividers more granularly
                 }
-            },
-            sleepMinutes = sleepMinutes,
-            onSleepIncrement = {
-                sleepMinutes++
-                updateExerciseData() // Call the unified update function
-            },
-            onSleepDecrement = {
-                if (sleepMinutes > 0) {
-                    sleepMinutes--
-                    updateExerciseData() // Call the unified update function
-                }
-            },
-            napMinutes = napMinutes,
-            onNapIncrement = {
-                napMinutes++
-                updateExerciseData() // Call the unified update function
-            },
-            onNapDecrement = {
-                if (napMinutes > 0) {
-                    napMinutes--
-                    updateExerciseData() // Call the unified update function
-                }
-            },
-            focusMinutes = focusMinutes,
-            onFocusIncrement = {
-                focusMinutes++
-                updateExerciseData() // Call the unified update function
-            },
-            onFocusDecrement = {
-                if (focusMinutes > 0) {
-                    focusMinutes--
-                    updateExerciseData() // Call the unified update function
-                }
+                BreathingSection(
+                    relaxMinutes = relaxMinutes,
+                    onRelaxIncrement = { relaxMinutes++; updateExerciseData() },
+                    onRelaxDecrement = {
+                        if (relaxMinutes > 0) {
+                            relaxMinutes--; updateExerciseData()
+                        }
+                    },
+                    sleepMinutes = sleepMinutes,
+                    onSleepIncrement = { sleepMinutes++; updateExerciseData() },
+                    onSleepDecrement = {
+                        if (sleepMinutes > 0) {
+                            sleepMinutes--; updateExerciseData()
+                        }
+                    },
+                    napMinutes = napMinutes,
+                    onNapIncrement = { napMinutes++; updateExerciseData() },
+                    onNapDecrement = {
+                        if (napMinutes > 0) {
+                            napMinutes--; updateExerciseData()
+                        }
+                    },
+                    focusMinutes = focusMinutes,
+                    onFocusIncrement = { focusMinutes++; updateExerciseData() },
+                    onFocusDecrement = {
+                        if (focusMinutes > 0) {
+                            focusMinutes--; updateExerciseData()
+                        }
+                    }
+                )
+                sectionsRendered++
             }
-        )
 
-        Divider(modifier = Modifier.padding(vertical = 16.dp))
-
-        RoutineChecklist(
-            dbHelper = routineDbHelper,
-            date = openedDay,
-            morningChecks = morningChecks,
-            eveningChecks = eveningChecks,
-            onMorningCheckChange = { newChecks ->
-                morningChecks.value = newChecks
-                updateRoutineData() // Save to DB whenever morning checks change
-            },
-            onEveningCheckChange = { newChecks ->
-                eveningChecks.value = newChecks
-                updateRoutineData() // Save to DB whenever evening checks change
+            if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Routines.id)) {
+                if (sectionsRendered > 0) { // Add a divider if other sections were rendered before this one
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                }
+                RoutineChecklist(
+                    dbHelper = routineDbHelper,
+                    date = openedDay,
+                    morningChecks = morningChecks,
+                    eveningChecks = eveningChecks,
+                    onMorningCheckChange = { newChecks ->
+                        morningChecks.value = newChecks; updateRoutineData()
+                    },
+                    onEveningCheckChange = { newChecks ->
+                        eveningChecks.value = newChecks; updateRoutineData()
+                    }
+                )
+                sectionsRendered++
             }
+
+            if (sectionsRendered == 0) {
+                Text(
+                    "No exercise sections are currently visible. Click the pencil icon (top-right) to customize.",
+                    modifier = Modifier
+                        .padding(16.dp) // Additional padding for this message within the Column
+                        .fillMaxWidth(), // Make it take full width for centering text
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, // Center the text
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+
+    // Dialog remains outside the Scaffold's content lambda
+    if (showCustomizeSectionsDialog) {
+        CustomizeExerciseSectionsDialog(
+            onDismissRequest = { showCustomizeSectionsDialog = false },
+            appGlobals = AppGlobals,
+            context = context
         )
     }
+}
+
+// --- Dialog Composable for Customizing Exercise Sections ---
+@OptIn(ExperimentalMaterial3Api::class) // For AlertDialog
+@Composable
+fun CustomizeExerciseSectionsDialog(
+    onDismissRequest: () -> Unit,
+    appGlobals: AppGlobals, // Type is AppGlobals object
+    context: Context
+) {
+    val allExerciseSections = remember { ExerciseScreenSectionInfo.getAllSections() }
+
+    // Use AppGlobals.visibleExerciseSectionIds as key for remember to re-initialize
+    // if the global state changes while dialog is not shown.
+    var tempSelectedIds by remember(appGlobals.visibleExerciseSectionIds) {
+        mutableStateOf(appGlobals.visibleExerciseSectionIds)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Customize Exercise Sections") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Select the sections you want to see on this screen.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                allExerciseSections.forEach { sectionInfo ->
+                    val isChecked = sectionInfo.id in tempSelectedIds
+                    // Core sections are visually toggleable but AppGlobals enforces them on save
+                    val canToggleSwitch = !sectionInfo.isCoreSection
+
+                    val updateSelection = { newCheckedState: Boolean ->
+                        // Allow toggling core features visually in the dialog,
+                        // AppGlobals.updateVisibleExerciseSectionIds will enforce core features are kept.
+                        val newSelected = tempSelectedIds.toMutableSet()
+                        if (newCheckedState) {
+                            newSelected.add(sectionInfo.id)
+                        } else {
+                            // Only allow removing if it's not a core section
+                            if (!sectionInfo.isCoreSection) {
+                                newSelected.remove(sectionInfo.id)
+                            } else {
+                                Log.d(
+                                    "CustomizeDialog",
+                                    "Core section ${sectionInfo.defaultLabel} cannot be unchecked here, will be enforced on Apply."
+                                )
+                                // Optionally show a Toast or keep it checked visually
+                                // For simplicity, we let it be visually unchecked, AppGlobals fixes it.
+                                newSelected.remove(sectionInfo.id) // Allow visual uncheck
+                            }
+                        }
+                        tempSelectedIds = newSelected
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable( // Row click toggles the state
+                                onClick = {
+                                    // If it's a core section and currently checked, clicking row won't uncheck it.
+                                    // If it's not core, or if it's core and unchecked (to check it), then toggle.
+                                    if (!sectionInfo.isCoreSection || !isChecked) {
+                                        updateSelection(!isChecked)
+                                    } else {
+                                        Log.d(
+                                            "CustomizeDialog",
+                                            "Clicked row of core section ${sectionInfo.defaultLabel}, no change as it's already checked."
+                                        )
+                                    }
+                                }
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = sectionInfo.defaultIcon,
+                            contentDescription = sectionInfo.defaultLabel,
+                            modifier = Modifier.size(24.dp),
+                            tint = if (isChecked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            text = sectionInfo.defaultLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = isChecked,
+                            onCheckedChange = { newCheckedState ->
+                                updateSelection(newCheckedState)
+                            },
+                            // Switch for core sections is enabled but its "off" state won't persist if it's core
+                            enabled = true, // Always enable switch for visual feedback
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                            )
+                        )
+                    }
+                    if (sectionInfo != allExerciseSections.last()) {
+                        Divider(modifier = Modifier.padding(start = 40.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    AppGlobals.updateVisibleExerciseSectionIds(context, tempSelectedIds)
+                    onDismissRequest()
+                }
+            ) { Text("Apply") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

@@ -5,11 +5,14 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.SelfImprovement
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -49,7 +52,7 @@ sealed class BottomNavItemInfo(
 ) {
     object AddData : BottomNavItemInfo("add_data", "Tracking", Icons.Default.MonitorHeart, true)
     object Statistics :
-        BottomNavItemInfo("statistics", "Statistics", Icons.Default.QueryStats, true)
+        BottomNavItemInfo("statistics", "Statistics", Icons.Default.QueryStats, false)
 
     object Food : BottomNavItemInfo("food", "Food", Icons.Default.Restaurant)
     object Exercises : BottomNavItemInfo("exercises", "Routines", Icons.Default.FitnessCenter)
@@ -65,6 +68,38 @@ sealed class BottomNavItemInfo(
 
         fun getItemByRoute(route: String): BottomNavItemInfo? {
             return getAllItems().find { it.route == route }
+        }
+    }
+}
+
+// --- NEW: Sealed class for Exercise Screen Section Information ---
+sealed class ExerciseScreenSectionInfo(
+    val id: String, // Unique identifier for SharedPreferences & logic
+    val defaultLabel: String,
+    val defaultIcon: ImageVector, // For use in the customization dialog
+    val isCoreSection: Boolean = false // If any section is considered essential and cannot be hidden
+) {
+    object Basics : ExerciseScreenSectionInfo(
+        "basics",
+        "Basic Exercises",
+        Icons.Default.AccessibilityNew,
+        true
+    ) // Example: Basics is core
+
+    object Breathing :
+        ExerciseScreenSectionInfo("breathing", "Breathing Exercises", Icons.Default.SelfImprovement)
+
+    object Routines :
+        ExerciseScreenSectionInfo("routines", "Routine Checklist", Icons.Default.Checklist)
+    // Add more sections here if they become available in ExercisesScreen
+
+    companion object {
+        fun getAllSections(): List<ExerciseScreenSectionInfo> {
+            return listOf(Basics, Breathing, Routines)
+        }
+
+        fun getSectionById(id: String): ExerciseScreenSectionInfo? {
+            return getAllSections().find { it.id == id }
         }
     }
 }
@@ -93,6 +128,10 @@ object AppGlobals {
     var visibleBottomNavRoutes by mutableStateOf<Set<String>>(emptySet())
         private set // Setter is private, use updateVisibleBottomNavRoutes
 
+    // --- NEW: Exercise Screen Section Customization ---
+    var visibleExerciseSectionIds by mutableStateOf<Set<String>>(emptySet())
+        private set // Setter is private, use updateVisibleExerciseSectionIds
+
     // --- SharedPreferences related ---
     const val PREFS_NAME = "AppPrefs"
     private const val KEY_DEVICE_ROLE = "device_role"
@@ -104,6 +143,7 @@ object AppGlobals {
     private const val KEY_PERFORM_AUTO_SYNC = "perform_auto_sync"
     private const val KEY_VISIBLE_BOTTOM_NAV_ROUTES =
         "visible_bottom_nav_routes" // Key for storing visible routes
+    private const val KEY_VISIBLE_EXERCISE_SECTIONS = "visible_exercise_sections" // New key
 
     private var sharedPreferencesInstance: SharedPreferences? = null
     private val gson = Gson() // For serializing/deserializing Set<String>
@@ -314,6 +354,97 @@ object AppGlobals {
         val allItemsInOrder = BottomNavItemInfo.getAllItems()
         // Filter based on the routes stored in visibleBottomNavRoutes, maintaining original order
         return allItemsInOrder.filter { it.route in visibleBottomNavRoutes }
+    }
+
+    // --- NEW: Load and Update methods for Exercise Screen Sections ---
+    private fun loadVisibleExerciseSectionIds(context: Context) {
+        val prefs = getPrefs(context)
+        val jsonString = prefs.getString(KEY_VISIBLE_EXERCISE_SECTIONS, null)
+        val allSectionIds = ExerciseScreenSectionInfo.getAllSections().map { it.id }.toSet()
+        val defaultCoreSectionIds = ExerciseScreenSectionInfo.getAllSections()
+            .filter { it.isCoreSection }
+            .map { it.id }
+            .toSet()
+
+        if (jsonString != null) {
+            val type = object : TypeToken<Set<String>>() {}.type
+            try {
+                val loadedIds: Set<String> = gson.fromJson(jsonString, type)
+                // Filter loaded IDs to ensure they are still valid sections
+                val validLoadedIds = loadedIds.filter { it in allSectionIds }.toSet()
+
+                // Ensure core sections are present. If not, or if list is empty, default to all.
+                if (validLoadedIds.isEmpty() || !validLoadedIds.containsAll(defaultCoreSectionIds)) {
+                    visibleExerciseSectionIds = allSectionIds // Default to all if problematic
+                    Log.w(
+                        "AppGlobals",
+                        "Loaded exercise sections were problematic ($validLoadedIds), defaulting to all sections."
+                    )
+                    updateVisibleExerciseSectionIds(
+                        context,
+                        visibleExerciseSectionIds
+                    ) // Persist corrected default
+                } else {
+                    visibleExerciseSectionIds = validLoadedIds
+                    Log.d(
+                        "AppGlobals",
+                        "Loaded visible exercise section IDs: $visibleExerciseSectionIds"
+                    )
+                }
+            } catch (e: Exception) { // Catches JsonSyntaxException and others
+                Log.e(
+                    "AppGlobals",
+                    "Error loading visible exercise sections from JSON, defaulting to all sections.",
+                    e
+                )
+                visibleExerciseSectionIds = allSectionIds
+                updateVisibleExerciseSectionIds(
+                    context,
+                    visibleExerciseSectionIds
+                ) // Persist default
+            }
+        } else {
+            // No preference saved (e.g., first launch). Default to showing all sections.
+            visibleExerciseSectionIds = allSectionIds
+            Log.d(
+                "AppGlobals",
+                "No saved exercise sections, defaulting to all: $visibleExerciseSectionIds"
+            )
+            updateVisibleExerciseSectionIds(context, visibleExerciseSectionIds) // Save this default
+        }
+    }
+
+    fun updateVisibleExerciseSectionIds(context: Context, newVisibleIdsUserChoice: Set<String>) {
+        val coreSectionIds = ExerciseScreenSectionInfo.getAllSections()
+            .filter { it.isCoreSection }
+            .map { it.id }
+            .toSet()
+        // Ensure core sections are always included, regardless of user choice for them.
+        val finalIdsToShow = newVisibleIdsUserChoice.union(coreSectionIds)
+        val allSectionIds = ExerciseScreenSectionInfo.getAllSections().map { it.id }.toSet()
+        // Ensure we only save valid section IDs
+        val validFinalIds = finalIdsToShow.filter { it in allSectionIds }.toSet()
+
+
+        if (visibleExerciseSectionIds != validFinalIds) { // Only update if there's an actual change
+            visibleExerciseSectionIds = validFinalIds
+            val jsonString = gson.toJson(validFinalIds)
+            getPrefs(context).edit().putString(KEY_VISIBLE_EXERCISE_SECTIONS, jsonString).apply()
+            Log.d("AppGlobals", "Updated and saved visible exercise section IDs to: $validFinalIds")
+        } else {
+            Log.d(
+                "AppGlobals",
+                "No change in visible exercise section IDs, not saving. Current: $visibleExerciseSectionIds"
+            )
+        }
+    }
+
+    // Helper to check if a specific section should be visible
+    fun isExerciseSectionVisible(sectionId: String): Boolean {
+        // If visibleExerciseSectionIds is empty (e.g., during initial load before defaults are set),
+        // it might appear that nothing is visible. The loading logic tries to prevent this.
+        // However, this check is straightforward.
+        return sectionId in visibleExerciseSectionIds
     }
 
     // --- Date Helpers ---
