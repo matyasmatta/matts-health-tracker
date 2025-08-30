@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Medication
@@ -93,6 +94,7 @@ import androidx.compose.material.icons.filled.DinnerDining // Import the new ico
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
@@ -336,23 +338,31 @@ fun CustomDatePickerDialog(
     }
 }
 
-@Composable
 @OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun DateNavigationBar(
     openedDay: String,
     onDateChange: (String) -> Unit,
-    currentSignedInAccount: GoogleSignInAccount?, // Add this parameter
-    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit // Add this parameter
+    currentSignedInAccount: GoogleSignInAccount?,
+    onSignedInAccountChange: (GoogleSignInAccount?) -> Unit
 ) {
     var isDatePickerVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val currentDay = AppGlobals.currentDay
+    // val currentDay = AppGlobals.currentDay // Not strictly needed if using 'today' directly
     val today = AppGlobals.getCurrentDayAsLocalDate().toString()
     val yesterday = AppGlobals.getCurrentDayAsLocalDate().minusDays(1).toString()
     var showToast by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
 
-    Log.d("DateNavigation", "Recomposing DateNavigationBar: openedDay=$openedDay")
+    // Check if the currently openedDay is already today
+    val isAlreadyToday by remember(openedDay, today) {
+        mutableStateOf(openedDay == today)
+    }
+
+    Log.d(
+        "DateNavigation",
+        "Recomposing DateNavigationBar: openedDay=$openedDay, isAlreadyToday=$isAlreadyToday"
+    )
 
     if (isDatePickerVisible) {
         CustomDatePickerDialog(
@@ -375,73 +385,99 @@ fun DateNavigationBar(
     if (showSettingsDialog) {
         SettingsDialog(
             onDismissRequest = { showSettingsDialog = false },
-            currentSignedInAccount = currentSignedInAccount, // Pass the parameter here!
-            onSignedInAccountChange = onSignedInAccountChange // Pass the callback here!
+            currentSignedInAccount = currentSignedInAccount,
+            onSignedInAccountChange = onSignedInAccountChange
         )
     }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp), // Main row padding
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        // Left Group: Settings and Previous Day
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Start
+            // horizontalArrangement = Arrangement.Start // Default for Row
         ) {
             IconButton(
-                onClick = {
-                    showSettingsDialog = true
-                },
-                modifier = Modifier.padding(end = 8.dp)
+                onClick = { showSettingsDialog = true },
+                // modifier = Modifier.padding(end = 8.dp) // Keep padding if desired
             ) {
                 Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings")
             }
-
+            Spacer(Modifier.width(4.dp)) // Reduced space
             IconButton(
                 onClick = {
-                    val currentDate = AppGlobals.getOpenedDayAsLocalDate()
-                    val previousDay = currentDate.minusDays(1)
-                    val newDate = previousDay.toString()
-                    onDateChange(newDate)
-                    Log.d("DateNavigation", "Changed to previous day: $newDate")
+                    val currentDate =
+                        AppGlobals.getOpenedDayAsLocalDate() // Use this consistent way
+                    val previousDayDate = currentDate.minusDays(1)
+                    onDateChange(previousDayDate.toString())
+                    Log.d(
+                        "DateNavigation",
+                        "Changed to previous day: ${previousDayDate.toString()}"
+                    )
                 }
             ) {
                 Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Previous Day")
             }
         }
 
+        // Center: Clickable Date Text
         Text(
             text = when (openedDay) {
                 yesterday -> "Yesterday"
                 today -> "Today"
-                else -> openedDay
+                else -> openedDay // Consider formatting this for better display if it's an arbitrary date
             },
             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
             modifier = Modifier
-                .clickable {
-                    isDatePickerVisible = true
-                }
-                .padding(8.dp)
+                .clickable { isDatePickerVisible = true }
+                .padding(horizontal = 8.dp) // Padding for the text itself
         )
 
-        IconButton(
-            onClick = {
-                val currentDate = AppGlobals.getOpenedDayAsLocalDate()
-                val nextDay = currentDate.plusDays(1)
-                if (nextDay <= AppGlobals.getCurrentDayAsLocalDate()) {
-                    val newDate = nextDay.toString()
-                    onDateChange(newDate)
-                    Log.d("DateNavigation", "Changed to next day: $newDate")
-                } else {
-                    Log.d("DateNavigation", "Cannot go beyond currentDay: $currentDay")
-                    Toast.makeText(context, "Cannot go beyond today!", Toast.LENGTH_SHORT).show()
-                }
-            }
+        // Right Group: Next Day and Jump to Today
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            // horizontalArrangement = Arrangement.End // Default behavior if Row is at the end of SpaceBetween
         ) {
-            Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next Day")
+            IconButton(
+                onClick = {
+                    val currentDate = AppGlobals.getOpenedDayAsLocalDate()
+                    val nextDayDate = currentDate.plusDays(1)
+                    if (nextDayDate <= AppGlobals.getCurrentDayAsLocalDate()) {
+                        onDateChange(nextDayDate.toString())
+                        Log.d("DateNavigation", "Changed to next day: ${nextDayDate.toString()}")
+                    } else {
+                        Log.d("DateNavigation", "Cannot go beyond today.")
+                        Toast.makeText(context, "Cannot go beyond today!", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                },
+                // Disable if openedDay is already today or the day before today (as next day would be today)
+                // More accurately, disable if next day would be after today
+                enabled = AppGlobals.getOpenedDayAsLocalDate()
+                    .plusDays(1) <= AppGlobals.getCurrentDayAsLocalDate()
+
+            ) {
+                Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Next Day")
+            }
+            Spacer(Modifier.width(4.dp)) // Reduced space
+
+            // ***** NEW "JUMP TO TODAY" BUTTON *****
+            IconButton(
+                onClick = {
+                    if (!isAlreadyToday) { // Only call if not already on today
+                        onDateChange(today) // 'today' is already defined as AppGlobals.getCurrentDayAsLocalDate().toString()
+                        Log.d("DateNavigation", "Jumped to today: $today")
+                    }
+                },
+                enabled = !isAlreadyToday // Disable the button if already on today's date
+            ) {
+                Icon(imageVector = Icons.Filled.Today, contentDescription = "Jump to Today")
+            }
         }
     }
 }
@@ -1768,31 +1804,28 @@ fun HealthTrackerScreen(openedDay: String) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class) // For AlertDialog, TextField, Button
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ManageSymptomsDialog(
     onDismissRequest: () -> Unit,
-    appGlobals: AppGlobals, // To access userDefinedSymptomNames and management functions
-    context: Context // Needed for AppGlobals functions that interact with SharedPreferences
+    appGlobals: AppGlobals,
+    context: Context
 ) {
-    // This state will make the LazyColumn recompose when AppGlobals.userDefinedSymptomNames changes
     val userSymptoms by rememberUpdatedState(newValue = appGlobals.userDefinedSymptomNames)
-
     var newSymptomText by remember { mutableStateOf("") }
-    var showDeleteConfirmationDialog by remember { mutableStateOf<String?>(null) } // Holds name of symptom to delete
+    var showDeleteConfirmationDialog by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismissRequest,
         title = { Text("Manage Symptoms") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 400.dp)) { // Constrain height for scrollability
+            Column(modifier = Modifier.heightIn(max = 400.dp)) {
                 Text(
                     "Add or remove your custom symptom trackers.",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Add New Symptom Row
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -1811,7 +1844,7 @@ fun ManageSymptomsDialog(
                         onClick = {
                             if (newSymptomText.isNotBlank()) {
                                 appGlobals.addUserDefinedSymptom(context, newSymptomText.trim())
-                                newSymptomText = "" // Clear field
+                                newSymptomText = ""
                             }
                         },
                         enabled = newSymptomText.isNotBlank()
@@ -1820,7 +1853,6 @@ fun ManageSymptomsDialog(
                     }
                 }
 
-                // List of Existing Symptoms
                 if (userSymptoms.isEmpty()) {
                     Text(
                         "No custom symptoms defined yet.",
@@ -1831,41 +1863,39 @@ fun ManageSymptomsDialog(
                     Text(
                         "Your Symptoms:",
                         style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(bottom = 4.dp)
+                        modifier = Modifier.padding(bottom = 8.dp) // Added padding
                     )
-                    LazyColumn(
-                        modifier = Modifier.weight(
-                            1f,
-                            fill = false
-                        ), // Allows LazyColumn to scroll within dialog
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+
+                    Spacer(Modifier.height(8.dp)) // Space before FlowRow
+                    FlowRow(
+                        // Experimental API, ensure you have the correct import
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()), // Scroll if content overflows
                     ) {
-                        items(userSymptoms, key = { it }) { symptomName ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(symptomName, modifier = Modifier.weight(1f))
-                                IconButton(
-                                    onClick = {
-                                        showDeleteConfirmationDialog =
-                                            symptomName // Set symptom to delete
-                                    },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
+                        userSymptoms.forEach { symptomName ->
+                            InputChip(
+                                selected = false,
+                                onClick = {
+                                    Log.d(
+                                        "ManageSymptoms",
+                                        "Chip '$symptomName' clicked"
+                                    )
+                                },
+                                label = { Text(symptomName) },
+                                trailingIcon = {
                                     Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "Delete $symptomName",
-                                        tint = MaterialTheme.colorScheme.error
+                                        imageVector = Icons.Filled.Close,
+                                        contentDescription = "Remove $symptomName",
+                                        modifier = Modifier
+                                            .size(InputChipDefaults.IconSize)
+                                            .clickable {
+                                                showDeleteConfirmationDialog = symptomName
+                                            }
                                     )
                                 }
-                            }
-                            if (symptomName != userSymptoms.lastOrNull()) {
-                                Divider()
-                            }
+                            )
+                            Spacer(Modifier.width(4.dp))
                         }
                     }
                 }
@@ -1874,22 +1904,21 @@ fun ManageSymptomsDialog(
         confirmButton = {
             TextButton(onClick = onDismissRequest) { Text("Done") }
         },
-        dismissButton = null // No explicit cancel, "Done" serves as confirm/dismiss
+        dismissButton = null
     )
 
-    // Delete Confirmation Dialog
     if (showDeleteConfirmationDialog != null) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirmationDialog = null }, // Dismiss confirmation
+            onDismissRequest = { showDeleteConfirmationDialog = null },
             title = { Text("Confirm Delete") },
-            text = { Text("Are you sure you want to delete the symptom \"$showDeleteConfirmationDialog\"? This cannot be undone.") },
+            text = { Text("Are you sure you want to delete the symptom \"$showDeleteConfirmationDialog\"? The data will persist in the database and can be retrieved by adding the symptom back under the exact same name.") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showDeleteConfirmationDialog?.let { nameToDelete ->
                             appGlobals.deleteUserDefinedSymptom(context, nameToDelete)
                         }
-                        showDeleteConfirmationDialog = null // Close confirmation dialog
+                        showDeleteConfirmationDialog = null
                     }
                 ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
             },
