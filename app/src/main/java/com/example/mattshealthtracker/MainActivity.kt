@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -84,6 +83,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import java.time.DayOfWeek
 import java.util.Locale
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitnessCenter
@@ -91,6 +93,7 @@ import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.DinnerDining // Import the new icon
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Restaurant
@@ -100,6 +103,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.disabled
 import androidx.lifecycle.ViewModelProvider
+import java.text.NumberFormat
 import java.time.Duration
 
 
@@ -724,7 +728,7 @@ fun HealthConnectDialog(
 
                             healthConnectViewModel.totalSteps?.let { steps ->
                                 Text(
-                                    text = "Steps Today: ${String.format("%,d", steps)}",
+                                    text = "Steps Today: ${String.format("% d", steps)}",
                                     style = MaterialTheme.typography.titleMedium,
                                     textAlign = TextAlign.Center
                                 )
@@ -1606,22 +1610,13 @@ fun HealthTrackerScreen(openedDay: String) {
             // --- Externals Section ---
             Text("Externals", style = MaterialTheme.typography.titleLarge)
             // Then, in your UI where you want to display it:
-            if (isLoadingStepsData) {
-                Text("Loading steps data...", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                Text(
-                    text = "Steps today: ${
-                        authoritativeStepCount?.let { steps ->
-                            // Format the integer/long step count. 
-                            // You can use number formatting for thousands separators if desired.
-                            steps.toString() // Simple string conversion
-                            // Or for formatting with commas, e.g., "10,532 steps":
-                            // java.text.NumberFormat.getInstance().format(steps)
-                        } ?: "N/A" // Or "0" or "No data"
-                    }",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
+            ValueTile(
+                title = "Steps Today",
+                icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                iconContentDescription = "Steps icon",
+                isLoading = isLoadingStepsData, // Use specific loading flag
+                valueString = authoritativeStepCount?.let { NumberFormat.getInstance().format(it) }
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             externalLabels.forEachIndexed { index, labelString ->
@@ -1704,6 +1699,15 @@ fun HealthTrackerScreen(openedDay: String) {
 
             // --- Sleep Section ---
             Text("Sleep", style = MaterialTheme.typography.titleLarge)
+            ValueTile(
+                title = "Sleep Length Today", // This is correct for the title
+                icon = Icons.Filled.Bedtime,
+                iconContentDescription = "Sleep icon",
+                isLoading = isLoadingSleepData,
+                valueString = authoritativeSleepDurationHours?.let { hours -> // <<< USE authoritativeSleepDurationHours
+                    "%.1f hrs".format(Locale.US, hours) // <<< CORRECT FORMATTING FOR HOURS
+                } // ?: "N/A" // Add this if you want "N/A" when authoritativeSleepDurationHours is null
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             if (isLoadingSleepData) {
@@ -1771,16 +1775,6 @@ fun HealthTrackerScreen(openedDay: String) {
                             enabled = false, // ALWAYS disabled
                             onValueChange = { } // No-op
                         )
-                        Text(
-                            text = "Reported value: ${
-                                authoritativeSleepDurationHours?.let {
-                                    "%.1f hrs".format(
-                                        it.coerceIn(0f, 12f)
-                                    )
-                                } ?: "0.0 hrs"
-                            }",
-                            style = MaterialTheme.typography.bodyMedium, // This is okay, but the Text(labelString,...) above it serves as the main title for the item
-                        )
                         Spacer(modifier = Modifier.height(6.dp))
                     } else {
                         // Other sleep sliders (Quality, Readiness) ARE editable
@@ -1831,6 +1825,61 @@ fun HealthTrackerScreen(openedDay: String) {
         )
     }
 }
+
+@Composable
+fun ValueTile(
+    title: String,
+    icon: ImageVector,
+    iconContentDescription: String,
+    isLoading: Boolean,
+    valueString: String?, // The formatted value to display (e.g., "10,532" or "7.5 hrs")
+    modifier: Modifier = Modifier,
+    valueStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.headlineSmall, // Allow customization
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary // Allow customization
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = iconContentDescription,
+                modifier = Modifier.size(36.dp),
+                tint = MaterialTheme.colorScheme.primary // Icon tint, can also be a parameter
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                } else {
+                    Text(
+                        text = valueString ?: "N/A",
+                        style = valueStyle,
+                        color = valueColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
