@@ -1,4 +1,4 @@
-package com.example.mattshealthtracker // Make sure this matches your package name
+package com.example.mattshealthtracker
 
 // Data class representing a single miscellaneous tracker item
 data class TrackerItem(
@@ -9,25 +9,17 @@ data class TrackerItem(
 
 // Data class holding the list of all miscellaneous tracker items for a date
 data class MiscellaneousData(
-    val items: List<TrackerItem>
+    val items: List<TrackerItem> // This will now hold items based on user-defined symptoms + daily data
 )
 
-// Function to provide the default list of miscellaneous trackers with their initial state
+// The function defaultMiscellaneousItems() is no longer the primary source
+// for the UI. AppGlobals.getTrackerItemsForDay() takes over that role conceptually.
+// You might remove defaultMiscellaneousItems() or keep it as a reference for initial defaults
+// if AppGlobals didn't handle that.
+/*
 fun defaultMiscellaneousItems(): List<TrackerItem> {
-    return listOf(
-        TrackerItem("TMJ pain", 0f, false),
-        TrackerItem("Neck clenching", 0f, false),
-        TrackerItem("Ear discomfort", 0f, false),
-        TrackerItem("Testicle pain", 0f, false),
-        TrackerItem("Teeth pain", 0f, false),
-        TrackerItem("Aura migraines", 0f, false),
-        TrackerItem("Nausea", 0f, false),
-        TrackerItem("Dizziness", 0f, false),
-        TrackerItem("Acne", 0f, false),
-        TrackerItem("Back pain", 0f, false),
-        TrackerItem("Tendon pain", 0f, false),
-        TrackerItem("Carpal tunnel", 0f, false),
-        TrackerItem("Limb weakness", 0f, false),
-        TrackerItem("Fatigue", 0f, false)
-    )
+    // This list is now managed by AppGlobals.userDefinedSymptomNames
+    // and combined with daily data.
+    return listOf() // Or remove entirely
 }
+*/

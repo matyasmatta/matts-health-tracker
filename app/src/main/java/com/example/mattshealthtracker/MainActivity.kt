@@ -1167,7 +1167,8 @@ fun HealthTrackerScreen(openedDay: String) {
     val context = LocalContext.current
     // Assuming your DB helpers are initialized here
     val dbHelper = remember { HealthDatabaseHelper(context) }
-    val miscellaneousDbHelper = remember { MiscellaneousDatabaseHelper(context) }
+    val appGlobals = AppGlobals
+    val miscellaneousDbHelper = remember { MiscellaneousDatabaseHelper(context, appGlobals) }
     val coroutineScope = rememberCoroutineScope() // For launching save operations
 
     // --- Unified Symptom List for UI ---
@@ -1212,7 +1213,10 @@ fun HealthTrackerScreen(openedDay: String) {
     var isLoadingSleepData by remember { mutableStateOf(false) } // To show loading state
     val healthConnectIntegrator = remember { HealthConnectIntegrator(context.applicationContext) }
 
-    LaunchedEffect(key1 = openedDay) { // Re-fetch if date changes
+    LaunchedEffect(
+        key1 = openedDay,
+        appGlobals.userDefinedSymptomNames
+    ) { // Re-fetch if date changes
         isLoadingSleepData = true
         Log.d("SleepSectionUI", "Fetching authoritative sleep data via integrator for $openedDay")
 
@@ -1252,12 +1256,14 @@ fun HealthTrackerScreen(openedDay: String) {
             ?: HealthData(today, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, "")
         healthDataFromDb = fetchedHealthData // Update state
 
-        val fetchedMiscellaneousItems = miscellaneousDbHelper.fetchMiscellaneousItems(today)
-        miscellaneousItemsFromDb = fetchedMiscellaneousItems.ifEmpty { defaultMiscellaneousItems() } // Update state, use defaults if empty
+        val fetchedMiscellaneousItems = miscellaneousDbHelper.fetchMiscellaneousItemsForDate(today)
+        miscellaneousItemsFromDb = fetchedMiscellaneousItems
 
         // 2. Fetch Yesterday's Data
         yesterdayHealthDataFromDb = yesterdayDateString?.let { dbHelper.fetchHealthDataForDate(it) }
-        yesterdayMiscellaneousItemsFromDb = yesterdayDateString?.let { miscellaneousDbHelper.fetchMiscellaneousItems(it) } ?: emptyList()
+        yesterdayMiscellaneousItemsFromDb =
+            yesterdayDateString?.let { miscellaneousDbHelper.fetchMiscellaneousItemsForDate(it) }
+                ?: emptyList()
 
         // 3. Initialize Non-Symptom UI States from Today's Fetched HealthData
         externalUISliderValues = listOf(fetchedHealthData.exerciseLevel, fetchedHealthData.stressLevel, fetchedHealthData.illnessImpact)
@@ -1452,10 +1458,10 @@ fun HealthTrackerScreen(openedDay: String) {
                 unifiedSymptomsUIList.filter { it.wasActiveYesterday }
             }
 
-            if (pinnedSymptoms.isNotEmpty()) {
-                Text("Symptoms", style = MaterialTheme.typography.titleLarge)
-                Spacer(modifier = Modifier.height(2.dp)) // Space between title and first item
+            Text("Symptoms", style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(2.dp)) // Space between title and first item
 
+            if (pinnedSymptoms.isNotEmpty()) {
                 pinnedSymptoms.forEach { item ->
                     UnifiedSymptomRow(
                         item = item,

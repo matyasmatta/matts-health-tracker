@@ -132,6 +132,10 @@ object AppGlobals {
     var visibleExerciseSectionIds by mutableStateOf<Set<String>>(emptySet())
         private set // Setter is private, use updateVisibleExerciseSectionIds
 
+    // --- User-Defined Symptom (TrackerItem Names) Customization ---
+    var userDefinedSymptomNames by mutableStateOf<List<String>>(emptyList())
+        private set
+
     // --- SharedPreferences related ---
     const val PREFS_NAME = "AppPrefs"
     private const val KEY_DEVICE_ROLE = "device_role"
@@ -144,6 +148,8 @@ object AppGlobals {
     private const val KEY_VISIBLE_BOTTOM_NAV_ROUTES =
         "visible_bottom_nav_routes" // Key for storing visible routes
     private const val KEY_VISIBLE_EXERCISE_SECTIONS = "visible_exercise_sections" // New key
+
+    private const val KEY_USER_DEFINED_SYMPTOM_NAMES = "user_defined_symptom_names" // New Key
 
     private var sharedPreferencesInstance: SharedPreferences? = null
     private val gson = Gson() // For serializing/deserializing Set<String>
@@ -164,6 +170,7 @@ object AppGlobals {
         loadOrGenerateAppDeviceID(context)
         loadPerformAutoSync(context)
         loadVisibleBottomNavRoutes(context) // Load the new preference for bottom nav items
+        loadUserDefinedSymptomNames(context)
         Log.d("AppGlobals", "Initialization complete.")
     }
 
@@ -445,6 +452,135 @@ object AppGlobals {
         // it might appear that nothing is visible. The loading logic tries to prevent this.
         // However, this check is straightforward.
         return sectionId in visibleExerciseSectionIds
+    }
+
+    // Symptoms helpers
+
+    // --- Load and Update for User-Defined Symptom Names ---
+    private fun loadUserDefinedSymptomNames(context: Context) {
+        val prefs = getPrefs(context)
+        val jsonString = prefs.getString(KEY_USER_DEFINED_SYMPTOM_NAMES, null)
+        val defaultSymptoms = listOf( // Your original defaults, users can modify/delete these
+            "TMJ pain", "Neck clenching", "Ear discomfort", "Testicle pain", "Teeth pain",
+            "Aura migraines", "Nausea", "Dizziness", "Acne", "Back pain",
+            "Tendon pain", "Carpal tunnel", "Limb weakness", "Fatigue"
+        )
+
+        if (jsonString != null) {
+            val type = object : TypeToken<List<String>>() {}.type
+            try {
+                val loadedNames: List<String> = gson.fromJson(jsonString, type)
+                userDefinedSymptomNames =
+                    loadedNames.distinct() // Ensure no duplicates from bad save
+                Log.d("AppGlobals", "Loaded user-defined symptom names: $userDefinedSymptomNames")
+                if (userDefinedSymptomNames.isEmpty() && defaultSymptoms.isNotEmpty()) {
+                    // If for some reason the loaded list is empty but we used to have defaults, re-seed.
+                    // This could happen if a user deletes all, or an error.
+                    // Consider if user explicitly wanting an empty list is valid.
+                    // For now, if empty AND defaults exist, re-seed (user can delete again).
+                    Log.w("AppGlobals", "Loaded empty symptom list, reseeding with defaults.")
+                    userDefinedSymptomNames = defaultSymptoms
+                    _updateUserDefinedSymptomNamesInternal(
+                        context,
+                        userDefinedSymptomNames
+                    ) // Persist defaults
+                }
+            } catch (e: Exception) {
+                Log.e("AppGlobals", "Error loading user-defined symptom names, using defaults.", e)
+                userDefinedSymptomNames = defaultSymptoms
+                _updateUserDefinedSymptomNamesInternal(
+                    context,
+                    userDefinedSymptomNames
+                ) // Persist defaults
+            }
+        } else {
+            // No preference saved (e.g., first launch or after clearing data).
+            userDefinedSymptomNames = defaultSymptoms
+            Log.d(
+                "AppGlobals",
+                "No saved user-defined symptom names, using defaults: $userDefinedSymptomNames"
+            )
+            _updateUserDefinedSymptomNamesInternal(
+                context,
+                userDefinedSymptomNames
+            ) // Save defaults
+        }
+    }
+
+    // Internal update function to avoid logging loop if called from load
+    private fun _updateUserDefinedSymptomNamesInternal(context: Context, newNames: List<String>) {
+        val distinctNames = newNames.distinct() // Ensure no duplicates
+        userDefinedSymptomNames = distinctNames
+        val jsonString = gson.toJson(distinctNames)
+        getPrefs(context).edit().putString(KEY_USER_DEFINED_SYMPTOM_NAMES, jsonString).apply()
+    }
+
+
+    // Public functions to modify the list from the UI
+    fun addUserDefinedSymptom(context: Context, newSymptomName: String) {
+        if (newSymptomName.isNotBlank() && !userDefinedSymptomNames.any {
+                it.equals(
+                    newSymptomName,
+                    ignoreCase = true
+                )
+            }) {
+            val updatedList = userDefinedSymptomNames + newSymptomName
+            _updateUserDefinedSymptomNamesInternal(context, updatedList)
+            Log.d(
+                "AppGlobals",
+                "Added symptom: $newSymptomName. New list: $userDefinedSymptomNames"
+            )
+        } else {
+            Log.w("AppGlobals", "Symptom '$newSymptomName' is blank or already exists.")
+        }
+    }
+
+    fun deleteUserDefinedSymptom(context: Context, symptomNameToDelete: String) {
+        if (userDefinedSymptomNames.any { it.equals(symptomNameToDelete, ignoreCase = true) }) {
+            val updatedList = userDefinedSymptomNames.filterNot {
+                it.equals(
+                    symptomNameToDelete,
+                    ignoreCase = true
+                )
+            }
+            _updateUserDefinedSymptomNamesInternal(context, updatedList)
+            Log.d(
+                "AppGlobals",
+                "Deleted symptom: $symptomNameToDelete. New list: $userDefinedSymptomNames"
+            )
+        } else {
+            Log.w("AppGlobals", "Symptom '$symptomNameToDelete' not found for deletion.")
+        }
+    }
+
+    fun updateUserDefinedSymptomOrder(context: Context, newOrderedNames: List<String>) {
+        // Ensure all items in newOrderedNames are actually known, and all known items are present
+        val currentSet = userDefinedSymptomNames.toSet()
+        val newSet = newOrderedNames.toSet()
+        if (currentSet == newSet && newOrderedNames.size == currentSet.size) { // Ensure it's just a reorder
+            _updateUserDefinedSymptomNamesInternal(context, newOrderedNames.distinct())
+            Log.d("AppGlobals", "Updated symptom order. New list: $userDefinedSymptomNames")
+        } else {
+            Log.e(
+                "AppGlobals",
+                "Attempted to update order with a mismatched set of symptoms. Current: $currentSet, New: $newSet"
+            )
+            // Optionally, try to reconcile or just log the error. For now, just log.
+        }
+    }
+
+    // Helper to get the TrackerItems for a given day based on user-defined symptoms
+    // This would replace your current `defaultMiscellaneousItems()` in usage.
+    // The actual daily data (value, isChecked) would still need to be loaded from your daily storage (e.g., a database for that day).
+    fun getTrackerItemsForDay(dailySavedData: MiscellaneousData?): List<TrackerItem> {
+        return userDefinedSymptomNames.map { name ->
+            val savedItem = dailySavedData?.items?.find { it.name.equals(name, ignoreCase = true) }
+            TrackerItem(
+                name = name,
+                value = savedItem?.value ?: 0f,
+                isChecked = savedItem?.isChecked ?: false
+            )
+        }
     }
 
     // --- Date Helpers ---
