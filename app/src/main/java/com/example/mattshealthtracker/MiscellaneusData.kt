@@ -27,5 +27,7 @@ fun defaultMiscellaneousItems(): List<TrackerItem> {
         TrackerItem("Back pain", 0f, false),
         TrackerItem("Tendon pain", 0f, false),
         TrackerItem("Carpal tunnel", 0f, false),
+        TrackerItem("Limb weakness", 0f, false),
+        TrackerItem("Fatigue", 0f, false)
     )
 }
