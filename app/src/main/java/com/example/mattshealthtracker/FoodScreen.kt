@@ -1,5 +1,6 @@
 package com.example.mattshealthtracker
 
+import android.graphics.Canvas
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +45,7 @@ import androidx.compose.ui.layout.positionInParent
 
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.composed
 import androidx.compose.ui.platform.LocalDensity
 import java.util.UUID
@@ -107,6 +109,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.requestFocus
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PaintingStyle.Companion.Stroke
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.VectorProperty
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -124,7 +135,7 @@ import kotlin.math.roundToInt
 import java.time.format.DateTimeFormatter
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
-
+import kotlin.io.path.Path
 
 // Data class to represent each card's properties
 data class HealthCard(
@@ -178,9 +189,9 @@ fun FoodScreen(openedDay: String) {
 
     val cards = remember {
         mutableStateListOf(
-            HealthCard("energy", "🔥 Energy Use Today", true, false),
-            HealthCard("trends", "📊 Dietary Trends", false, false),
-            HealthCard("food_input", "🍎 Food", true, true)
+            HealthCard("energy", "🔥  Energy Use Today", true, false),
+            HealthCard("trends", "📊  Dietary Trends", true, true),
+            HealthCard("food_input", "🍎  Food", true, true)
         )
     }
 
@@ -396,8 +407,9 @@ fun FoodScreen(openedDay: String) {
                     "trends" -> {
                         TrendsCard(
                             expanded = currentExpandedState,
-                            onExpandedChange = onExpansionChangedByChild
-                            // Pass any necessary data for TrendsCard
+                            onExpandedChange = onExpansionChangedByChild,
+                            healthConnectViewModel = healthConnectViewModel,
+                            openedDay = openedDay, // Pass the current openedDay
                         )
                     }
                     "food_input" -> {
@@ -825,28 +837,524 @@ private fun RatingRowDisplay(label: String, ratingFraction: Float, starCount: In
 @Composable
 fun TrendsCard(
     expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit
+    onExpandedChange: (Boolean) -> Unit,
+    healthConnectViewModel: HealthConnectViewModel, // Add this parameter
+    openedDay: String // Add this parameter
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // Weight data state
+    var weightData by remember { mutableStateOf<List<WeightDataPoint>>(emptyList()) }
+    var isLoadingWeightData by remember { mutableStateOf(false) }
+    var weightError by remember { mutableStateOf<String?>(null) }
+
+    // Load weight data when card is opened
+    LaunchedEffect(expanded, openedDay) {
+        if (expanded) {
+            isLoadingWeightData = true
+            weightError = null
+            try {
+                // Get weight data for the last 30 days
+                val endDate = LocalDate.parse(openedDay)
+                val startDate = endDate.minusDays(29)
+
+                val data = mutableListOf<WeightDataPoint>()
+                var currentDate = startDate
+
+                while (!currentDate.isAfter(endDate)) {
+                    val weight =
+                        healthConnectViewModel.healthConnectIntegrator.getWeightForDay(currentDate.toString())
+                    if (weight != null) {
+                        data.add(WeightDataPoint(currentDate, weight))
+                    }
+                    currentDate = currentDate.plusDays(1)
+                }
+
+                weightData = data
+            } catch (e: Exception) {
+                weightError = "Failed to load weight data: ${e.localizedMessage}"
+                Log.e("TrendsCard", "Error loading weight data", e)
+            } finally {
+                isLoadingWeightData = false
+            }
+        }
+    }
+
     AppUiElements.CollapsibleCard(
-        titleContent = { Text("📊 Dietary Trends", style = MaterialTheme.typography.titleMedium) },
+        titleContent = {
+            Text("📊 Weight Trends", style = MaterialTheme.typography.titleMedium)
+        },
         expanded = expanded,
         onExpandedChange = onExpandedChange,
         isExpandable = true,
-        defaultContent = {
-            Column(modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)) { // Added padding if content is directly under title
-                Text("Trends data will be shown here.")
-                // Add more UI for trends data
+        quickGlanceInfo = {
+            if (!expanded && weightData.isNotEmpty()) {
+                val latestWeight = weightData.lastOrNull()?.weight
+                val firstWeight = weightData.firstOrNull()?.weight
+
+                if (latestWeight != null && firstWeight != null) {
+                    val change = latestWeight - firstWeight
+                    val changeText = if (change > 0) "+${String.format("%.1f", change)} kg"
+                    else "${String.format("%.1f", change)} kg"
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${String.format("%.1f", latestWeight)} kg",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "($changeText last 30d)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (change < 0) Color.Red else if (change > 0) Color.Green else Color.Gray
+                        )
+                    }
+                }
             }
         },
+        defaultContent = {
+            if (!expanded) {
+                Column(modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)) {
+                    if (weightData.isEmpty() && !isLoadingWeightData) {
+                        Text(
+                            "No weight data available",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
+        hideDefaultWhenExpanded = true,
         expandableContent = {
-            // If TrendsCard has more details upon expansion, put them here.
-            // Otherwise, defaultContent will just show.
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                if (isLoadingWeightData) {
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    }
+                } else if (weightError != null) {
+                    Text(
+                        "Error: $weightError",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else if (weightData.isEmpty()) {
+                    Text(
+                        "No weight data found for the last 30 days",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    // Weight statistics
+                    WeightStatsSection(weightData)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Weight graph
+                    WeightGraph(weightData)
+                }
+            }
         }
-        // hideDefaultWhenExpanded = false (default)
     )
 }
+
+// Data class for weight points
+data class WeightDataPoint(
+    val date: LocalDate,
+    val weight: Double
+)
+
+@Composable
+private fun WeightStatsSection(weightData: List<WeightDataPoint>) {
+    val latestWeight = weightData.lastOrNull()?.weight
+    val firstWeight = weightData.firstOrNull()?.weight
+    val minWeight = weightData.minOfOrNull { it.weight }
+    val maxWeight = weightData.maxOfOrNull { it.weight }
+    val avgWeight = weightData.map { it.weight }.average()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                alpha = 0.5f
+            )
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Weight Statistics (Last 30 Days)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+
+                StatItem(
+                    "Current",
+                    latestWeight?.let { "${String.format("%.1f", it)} kg" } ?: "N/A")
+                StatItem("Average", "${String.format("%.1f", avgWeight)} kg")
+                StatItem(
+                    "Range",
+                    if (minWeight != null && maxWeight != null)
+                        "${String.format("%.1f", minWeight)} - ${
+                            String.format(
+                                "%.1f",
+                                maxWeight
+                            )
+                        } kg"
+                    else "N/A"
+                )
+            }
+
+            if (latestWeight != null && firstWeight != null) {
+                val change = latestWeight - firstWeight
+                val changeText = if (change > 0) "+${String.format("%.1f", change)} kg"
+                else "${String.format("%.1f", change)} kg"
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "30-day change: $changeText",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (change < 0) Color.Red else if (change > 0) Color.Green else Color.Gray,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun WeightGraph(weightData: List<WeightDataPoint>) {
+    if (weightData.size < 2) {
+        Column( // Added Column for alignment if this message shows
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "Need at least 2 data points to show graph",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+
+    var selectedPoint by remember { mutableStateOf<WeightDataPoint?>(null) }
+    val density = LocalDensity.current
+
+    // --- Colors and Styles (to match WeightStatsSection where possible) ---
+    val primaryColor = MaterialTheme.colorScheme.primary
+    // For selected point info, use a subtle container, similar to stats card but maybe slightly different
+    val selectedPointInfoContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+
+    val onSurfaceVariantColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val whiteColor = Color.White
+
+    // Graph specific colors - make them subtle and theme-aware
+    val gridLineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val axisTickLabelColor =
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f) // Slightly more prominent tick labels
+    val mainAxisLineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+
+    // Graph plot area background: Make it very light or transparent if the card bg is light
+    // If stats card is surfaceVariant.copy(alpha=0.5f), this should be even more subtle or match card's inner bg
+    val graphPlotAreaBackgroundColor =
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.2f) // Very subtle wash, or transparent
+    // Or, to truly match the card, you might make it Color.Transparent if the card itself has the desired bg.
+
+    // Text sizes for labels on canvas
+    val tickLabelTextSizeSp = 10.sp // Slightly smaller for a cleaner look without axis titles
+
+    // Card background similar to WeightStatsSection
+    val cardBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = cardBackgroundColor) // Apply similar background
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Weight Trend",
+                style = MaterialTheme.typography.titleSmall, // Match stats section title style
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            // Show selected point info
+            selectedPoint?.let { point ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = selectedPointInfoContainerColor
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp) // Add slight elevation
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                point.date.format(DateTimeFormatter.ofPattern("MMM dd, yyyy")),
+                                style = MaterialTheme.typography.bodyMedium, // Match stats section text style
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "${String.format("%.1f", point.weight)} kg",
+                                style = MaterialTheme.typography.titleMedium, // Or bodyLarge if titleMedium is too big
+                                color = primaryColor,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        IconButton(
+                            onClick = { selectedPoint = null },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Close",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(230.dp) // Adjusted height slightly
+                    .pointerInput(Unit) {
+                        detectTapGestures { offset ->
+                            val canvasWidth = size.width.toFloat()
+                            val graphAreaPadding =
+                                with(density) { 30.dp.toPx() } // Main padding around graph
+                            val yAxisTickPadding =
+                                with(density) { 35.dp.toPx() }  // Space for Y-axis numbers
+
+                            val graphPlotXStart = yAxisTickPadding
+                            val graphPlotWidth =
+                                canvasWidth - graphPlotXStart - graphAreaPadding // Right side padding
+
+                            val tapX = offset.x
+                            if (tapX >= graphPlotXStart && tapX <= graphPlotXStart + graphPlotWidth) {
+                                val relativeX = (tapX - graphPlotXStart) / graphPlotWidth
+                                val dataIndex = (relativeX * (weightData.size - 1))
+                                    .roundToInt()
+                                    .coerceIn(0, weightData.size - 1)
+                                selectedPoint = weightData[dataIndex]
+                            }
+                        }
+                    }
+            ) {
+                val canvasWidth = size.width
+                val canvasHeight = size.height
+
+                val yAxisTickPadding =
+                    with(density) { 35.dp.toPx() }  // Space for Y-axis numbers (e.g., "60.5")
+                val xAxisTickPadding =
+                    with(density) { 20.dp.toPx() }  // Space for X-axis dates (e.g., "03/15")
+                val topPadding =
+                    with(density) { 10.dp.toPx() }       // Padding at the top of the graph
+                val rightPadding =
+                    with(density) { 10.dp.toPx() }     // Padding at the right of the graph
+
+                val tickLabelPxSize = with(density) { tickLabelTextSizeSp.toPx() }
+
+                // Define the actual plotting area boundaries
+                val graphPlotXStart = yAxisTickPadding
+                val graphPlotYStart = topPadding
+                val graphPlotWidth = canvasWidth - yAxisTickPadding - rightPadding
+                val graphPlotHeight = canvasHeight - topPadding - xAxisTickPadding
+
+                if (graphPlotWidth <= 0 || graphPlotHeight <= 0) return@Canvas // Not enough space to draw
+
+                val minWeight = weightData.minOf { it.weight }.toFloat()
+                val maxWeight = weightData.maxOf { it.weight }.toFloat()
+                val weightRange = maxWeight - minWeight
+
+                val yAxisPaddingFactor = 0.1f
+                val paddedMinY =
+                    if (weightRange > 0) minWeight - (weightRange * yAxisPaddingFactor) else minWeight - 1f
+                val paddedMaxY =
+                    if (weightRange > 0) maxWeight + (weightRange * yAxisPaddingFactor) else maxWeight + 1f
+                val yRange = (paddedMaxY - paddedMinY).coerceAtLeast(0.1f)
+
+                val points = weightData.mapIndexed { index, dataPoint ->
+                    val x =
+                        graphPlotXStart + (index.toFloat() / (weightData.size - 1).coerceAtLeast(1)) * graphPlotWidth
+                    val y =
+                        graphPlotYStart + graphPlotHeight - ((dataPoint.weight.toFloat() - paddedMinY) / yRange) * graphPlotHeight
+                    Offset(x, y)
+                }
+
+                // Draw plot area background (optional, can be transparent)
+                drawRect(
+                    color = graphPlotAreaBackgroundColor,
+                    topLeft = Offset(graphPlotXStart, graphPlotYStart),
+                    size = Size(graphPlotWidth, graphPlotHeight)
+                )
+
+                // Horizontal grid lines & Y-axis labels
+                val numHorizontalGridLines = 5
+                repeat(numHorizontalGridLines) { i ->
+                    val yPos =
+                        graphPlotYStart + graphPlotHeight - (i * graphPlotHeight / (numHorizontalGridLines - 1))
+                    val weightValue = paddedMinY + (i * yRange / (numHorizontalGridLines - 1))
+
+                    drawLine(
+                        color = gridLineColor,
+                        start = Offset(graphPlotXStart, yPos),
+                        end = Offset(graphPlotXStart + graphPlotWidth, yPos),
+                        strokeWidth = 0.5.dp.toPx() // Thinner grid lines
+                    )
+                    drawContext.canvas.nativeCanvas.drawText(
+                        String.format("%.1f", weightValue),
+                        graphPlotXStart - with(density) { 4.dp.toPx() }, // Adjust for text alignment
+                        yPos + tickLabelPxSize / 3,
+                        android.graphics.Paint().apply {
+                            color = axisTickLabelColor.toArgb()
+                            textSize = tickLabelPxSize
+                            textAlign = android.graphics.Paint.Align.RIGHT
+                        }
+                    )
+                }
+
+                // Vertical grid lines & X-axis labels
+                val maxDateLabels = 5 // Adjusted for cleaner look
+                val dateStep = maxOf(
+                    1,
+                    (weightData.size - 1) / maxDateLabels.coerceAtMost(weightData.size - 1)
+                        .coerceAtLeast(1)
+                )
+                for (i in weightData.indices step dateStep) {
+                    val xPos =
+                        graphPlotXStart + (i.toFloat() / (weightData.size - 1).coerceAtLeast(1)) * graphPlotWidth
+                    drawLine(
+                        color = gridLineColor,
+                        start = Offset(xPos, graphPlotYStart),
+                        end = Offset(xPos, graphPlotYStart + graphPlotHeight),
+                        strokeWidth = 0.5.dp.toPx()
+                    )
+                    val dateLabel = weightData[i].date.format(DateTimeFormatter.ofPattern("MM/dd"))
+                    drawContext.canvas.nativeCanvas.drawText(
+                        dateLabel,
+                        xPos,
+                        graphPlotYStart + graphPlotHeight + xAxisTickPadding - with(density) { 4.dp.toPx() },
+                        android.graphics.Paint().apply {
+                            color = axisTickLabelColor.toArgb()
+                            textSize = tickLabelPxSize
+                            textAlign = android.graphics.Paint.Align.CENTER
+                        }
+                    )
+                }
+
+                // Main axis lines (subtler)
+                drawLine(
+                    color = mainAxisLineColor,
+                    start = Offset(graphPlotXStart, graphPlotYStart + graphPlotHeight), // X-axis
+                    end = Offset(
+                        graphPlotXStart + graphPlotWidth,
+                        graphPlotYStart + graphPlotHeight
+                    ),
+                    strokeWidth = 1.dp.toPx()
+                )
+                drawLine(
+                    color = mainAxisLineColor,
+                    start = Offset(graphPlotXStart, graphPlotYStart), // Y-axis
+                    end = Offset(graphPlotXStart, graphPlotYStart + graphPlotHeight),
+                    strokeWidth = 1.dp.toPx()
+                )
+
+                // Weight line
+                if (points.size > 1) {
+                    val path = Path()
+                    path.moveTo(points[0].x, points[0].y)
+                    for (i in 1 until points.size) {
+                        path.lineTo(points[i].x, points[i].y)
+                    }
+                    drawPath(path = path, color = primaryColor, style = Stroke(width = 2.dp.toPx()))
+                }
+
+                // Data points
+                val pointRadiusSelected = 7.dp.toPx()
+                val pointRadiusNormal = 5.dp.toPx()
+                val pointBackgroundRadiusSelected = 9.dp.toPx()
+                val pointBackgroundRadiusNormal = 7.dp.toPx()
+
+                points.forEach { pointOffset ->
+                    val dataIndex =
+                        points.indexOf(pointOffset) // Simple way to get corresponding data for selection check
+                    val dataPoint = weightData[dataIndex]
+                    val isSelected = selectedPoint == dataPoint
+
+                    drawCircle(
+                        color = whiteColor, // Background for the point
+                        radius = if (isSelected) pointBackgroundRadiusSelected else pointBackgroundRadiusNormal,
+                        center = pointOffset
+                    )
+                    drawCircle(
+                        color = if (isSelected) primaryColor else primaryColor.copy(alpha = 0.8f),
+                        radius = if (isSelected) pointRadiusSelected else pointRadiusNormal,
+                        center = pointOffset
+                    )
+                    if (isSelected) {
+                        drawCircle(
+                            color = primaryColor,
+                            radius = pointBackgroundRadiusSelected + 2.dp.toPx(), // Selection ring slightly larger than background
+                            center = pointOffset,
+                            style = Stroke(width = 1.5.dp.toPx())
+                        )
+                    }
+                }
+            } // End Canvas onDraw
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                "Tap on data points for details",
+                style = MaterialTheme.typography.bodySmall, // Match stats section text style
+                color = onSurfaceVariantColor,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+        }
+    }
+}
+
+
+
 @OptIn(ExperimentalFoundationApi::class) // If FoodItemCard or other internal elements use it
 @Composable
 fun FoodInputCard(

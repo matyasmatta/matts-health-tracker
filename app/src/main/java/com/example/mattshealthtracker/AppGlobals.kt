@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.QueryStats
@@ -55,6 +56,9 @@ sealed class BottomNavItemInfo(
         BottomNavItemInfo("statistics", "Statistics", Icons.Default.QueryStats, false)
 
     object Food : BottomNavItemInfo("food", "Food", Icons.Default.Restaurant)
+
+    object Diet :
+        BottomNavItemInfo(route = "diet", defaultLabel = "Diet", defaultIcon = Icons.Default.Grass)
     object Exercises : BottomNavItemInfo("exercises", "Routines", Icons.Default.FitnessCenter)
     object MedicationTracking :
         BottomNavItemInfo("medication_tracking", "Meds", Icons.Default.Medication)
@@ -63,7 +67,7 @@ sealed class BottomNavItemInfo(
     companion object {
         fun getAllItems(): List<BottomNavItemInfo> {
             // Defines the order in which items will appear if all are visible
-            return listOf(AddData, Statistics, Food, Exercises, MedicationTracking)
+            return listOf(AddData, Statistics, Food, Diet, Exercises, MedicationTracking)
         }
 
         fun getItemByRoute(route: String): BottomNavItemInfo? {

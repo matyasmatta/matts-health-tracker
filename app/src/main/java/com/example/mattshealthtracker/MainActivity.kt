@@ -282,6 +282,7 @@ fun HealthTrackerApp(
                     BottomNavItemInfo.AddData.route -> HealthTrackerScreen(openedDay)
                     BottomNavItemInfo.Statistics.route -> StatisticsScreen(openedDay)
                     BottomNavItemInfo.Food.route -> FoodScreen(openedDay)
+                    BottomNavItemInfo.Diet.route -> DietScreen(openedDay)
                     BottomNavItemInfo.Exercises.route -> ExercisesScreen(openedDay)
                     BottomNavItemInfo.MedicationTracking.route -> MedicationScreen(openedDay)
                     // Add cases for any other items you might have
