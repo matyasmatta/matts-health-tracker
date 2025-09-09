@@ -30,6 +30,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone // For UTC timestamp
 import java.util.UUID // Import UUID
+import androidx.core.content.edit
 
 // Enums (keep them here or move to separate files if they grow)
 enum class EnergyUnit { KCAL, KJ }
@@ -188,6 +189,24 @@ object AppGlobals {
             DeviceRole.PRIMARY
         }
         Log.d("AppGlobals", "Loaded DeviceRole: $deviceRole")
+    }
+
+    fun putString(context: Context, key: String, value: String?) {
+        getPrefs(context).edit { putString(key, value) }
+        Log.d("AppGlobals", "putString: key='$key', value='$value'")
+    }
+
+    /**
+     * Retrieves a String value from SharedPreferences.
+     * Call AppGlobals.initialize(context) before using this if not already done.
+     */
+    fun getString(context: Context, key: String, defaultValue: String?): String? {
+        val value = getPrefs(context).getString(key, defaultValue)
+        Log.d(
+            "AppGlobals",
+            "getString: key='$key', defaultValue='$defaultValue', retrievedValue='$value'"
+        )
+        return value
     }
 
     fun updateDeviceRole(context: Context, newRole: DeviceRole) {

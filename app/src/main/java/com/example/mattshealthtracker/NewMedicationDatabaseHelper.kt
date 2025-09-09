@@ -5,12 +5,21 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import androidx.compose.ui.platform.LocalContext
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
 import java.io.IOException
 
-class NewMedicationDatabaseHelper(context: Context) :
+data class DefaultMedicationTemplate(
+    val name: String,
+    val step: Float,
+    val unit: String
+)
+
+class NewMedicationDatabaseHelper(private val context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
@@ -27,7 +36,13 @@ class NewMedicationDatabaseHelper(context: Context) :
         // Table for side effects (one row per day)
         const val TABLE_SIDE_EFFECTS = "side_effects"
         const val COLUMN_SIDE_EFFECTS = "side_effects"
+
+        // SharedPreferences keys
+        const val PREF_MEDICATION_TEMPLATES = "medication_templates"
+        private const val PREF_KEY_MEDICATION_TEMPLATES_IN_HELPER = "medication_templates_local"
     }
+
+    private val gson = Gson()
 
     override fun onCreate(db: SQLiteDatabase?) {
         // Create table for medication items.
@@ -57,6 +72,98 @@ class NewMedicationDatabaseHelper(context: Context) :
         db?.execSQL("DROP TABLE IF EXISTS $TABLE_MEDICATIONS")
         db?.execSQL("DROP TABLE IF EXISTS $TABLE_SIDE_EFFECTS")
         onCreate(db)
+    }
+
+    // Save medication templates to SharedPreferences
+    // Save medication templates to SharedPreferences
+    fun saveMedicationTemplates(templates: List<DefaultMedicationTemplate>) {
+        val json = gson.toJson(templates)
+        // Use the context passed to the helper
+        AppGlobals.putString(context, PREF_KEY_MEDICATION_TEMPLATES_IN_HELPER, json)
+        Log.d("MedicationDBHelper", "Saved templates: $json")
+
+    }
+
+    // Load medication templates from SharedPreferences
+    fun loadMedicationTemplates(): List<DefaultMedicationTemplate> {
+        // Use the context passed to the helper
+        val json = AppGlobals.getString(context, PREF_KEY_MEDICATION_TEMPLATES_IN_HELPER, null)
+        Log.d("MedicationDBHelper", "Loaded templates JSON: $json")
+        return if (json != null) {
+            try {
+                val type = object : TypeToken<List<DefaultMedicationTemplate>>() {}.type
+                gson.fromJson(json, type)
+            } catch (e: Exception) {
+                Log.e(
+                    "MedicationDBHelper",
+                    "Error parsing templates from JSON, returning defaults.",
+                    e
+                )
+                getDefaultMedicationTemplates().also { saveMedicationTemplates(it) }
+            }
+        } else {
+            getDefaultMedicationTemplates().also {
+                saveMedicationTemplates(it)
+            }
+        }
+    }
+
+    // Add a new medication template
+    fun addMedicationTemplate(name: String, step: Float, unit: String) {
+        val templates = loadMedicationTemplates().toMutableList()
+        // Check if medication already exists
+        if (templates.none { it.name.equals(name, ignoreCase = true) }) {
+            templates.add(DefaultMedicationTemplate(name, step, unit))
+            saveMedicationTemplates(templates)
+        }
+    }
+
+    // Remove a medication template
+    fun removeMedicationTemplate(name: String) {
+        val templates = loadMedicationTemplates().toMutableList()
+        templates.removeAll { it.name.equals(name, ignoreCase = true) }
+        saveMedicationTemplates(templates)
+    }
+
+    // Update a medication template
+    fun updateMedicationTemplate(oldName: String, newName: String, step: Float, unit: String) {
+        val templates = loadMedicationTemplates().toMutableList()
+        val index = templates.indexOfFirst { it.name.equals(oldName, ignoreCase = true) }
+        if (index != -1) {
+            templates[index] = DefaultMedicationTemplate(newName, step, unit)
+            saveMedicationTemplates(templates)
+        }
+    }
+
+    // Get default medication templates (initial set)
+    private fun getDefaultMedicationTemplates(): List<DefaultMedicationTemplate> {
+        return listOf(
+            DefaultMedicationTemplate("amitriptyline", 6.25f, "mg"),
+            DefaultMedicationTemplate("inosine pranobex", 500f, "mg"),
+            DefaultMedicationTemplate("paracetamol", 250f, "mg"),
+            DefaultMedicationTemplate("ibuprofen", 200f, "mg"),
+            DefaultMedicationTemplate("vitamin D", 500f, "IU"),
+            DefaultMedicationTemplate("bisulepine", 1f, "mg"),
+            DefaultMedicationTemplate("cetirizine", 5f, "mg"),
+            DefaultMedicationTemplate("doxycycline", 100f, "mg"),
+            DefaultMedicationTemplate("corticosteroids", 5f, "mg-eq"),
+            DefaultMedicationTemplate("magnesium glycinate", 250f, "mg"),
+            DefaultMedicationTemplate("ketotifen", 0.5f, "mg"),
+            DefaultMedicationTemplate("desloratidine", 2.5f, "mg"),
+            DefaultMedicationTemplate("omeprazol", 10f, "mg"),
+            DefaultMedicationTemplate("pantoprazol", 40f, "mg"),
+            DefaultMedicationTemplate("itopride", 50f, "mg"),
+            DefaultMedicationTemplate("alginate", 1f, "pack"),
+            DefaultMedicationTemplate("mirtazapine", 7.5f, "mg"),
+            DefaultMedicationTemplate("moxastine teoclate", 12.5f, "mg")
+        )
+    }
+
+    // Create default medications from templates
+    private fun getDefaultMedications(): List<MedicationItem> {
+        return loadMedicationTemplates().map { template ->
+            MedicationItem(template.name, 0f, template.step, template.unit)
+        }
     }
 
     // Inserts or updates a single medication item for a given date.
@@ -118,28 +225,13 @@ class NewMedicationDatabaseHelper(context: Context) :
                 val name = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_MEDICATION_NAME))
                 val dosage = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_DOSAGE))
                 val isStarred = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_STARRED)) == 1
-                // Look up the default step and unit values from a default mapping.
-                val defaultMapping = mapOf(
-                    "amitriptyline" to Pair(6.25f, "mg"),
-                    "inosine pranobex" to Pair(500f, "mg"),
-                    "paracetamol" to Pair(250f, "mg"),
-                    "ibuprofen" to Pair(200f, "mg"),
-                    "vitamin D" to Pair(500f, "IU"),
-                    "bisulepine" to Pair(1f, "mg"),
-                    "cetirizine" to Pair(5f, "mg"),
-                    "doxycycline" to Pair(100f, "mg"),
-                    "corticosteroids" to Pair(5f, "mg-eq"),
-                    "magnesium glycinate" to Pair(250f, "mg"),
-                    "ketotifen" to Pair(0.5f, "mg"),
-                    "desloratidine" to Pair(2.5f, "mg"),
-                    "omeprazol" to Pair(10f, "mg"),
-                    "pantoprazol" to Pair(40f, "mg"),
-                    "itopride" to Pair(50f, "mg"),
-                    "alginate" to Pair(1f, "pack"),
-                    "mirtazapine" to Pair(7.5f, "mg"),
-                    "moxastine teoclate" to Pair(12.5f, "mg")
-                )
-                val (step, unit) = defaultMapping[name] ?: Pair(0f, "")
+
+                // Look up the step and unit values from saved templates
+                val templates = loadMedicationTemplates()
+                val template = templates.find { it.name.equals(name, ignoreCase = true) }
+                val step = template?.step ?: 1f
+                val unit = template?.unit ?: "mg"
+
                 items.add(MedicationItem(name, dosage, step, unit, isStarred))
             } while (cursor.moveToNext())
         }
@@ -171,38 +263,16 @@ class NewMedicationDatabaseHelper(context: Context) :
         } else {
             // No previous data, just return defaults
             Log.d("NewMedicationDatabaseHelper", "Found no medication data even for previous day ${previousDate}.")
-            defaultMedications
+            getDefaultMedications()
         }
     }
 
     // Helper function to merge fetched meds with default meds
     private fun mergeWithDefaults(fetched: List<MedicationItem>): List<MedicationItem> {
         val fetchedNames = fetched.map { it.name }.toSet()
-        val missingDefaults = defaultMedications.filter { it.name !in fetchedNames }
+        val missingDefaults = getDefaultMedications().filter { it.name !in fetchedNames }
         return fetched + missingDefaults
     }
-
-    // Default medication list (moved inside the helper)
-    private val defaultMedications = listOf(
-        MedicationItem("amitriptyline", 0f, 6.25f, "mg"),
-        MedicationItem("inosine pranobex", 0f, 500f, "mg"),
-        MedicationItem("paracetamol", 0f, 250f, "mg"),
-        MedicationItem("ibuprofen", 0f, 200f, "mg"),
-        MedicationItem("vitamin D", 0f, 500f, "IU"),
-        MedicationItem("bisulepine", 0f, 1f, "mg"),
-        MedicationItem("cetirizine", 0f, 5f, "mg"),
-        MedicationItem("doxycycline", 0f, 100f, "mg"),
-        MedicationItem("corticosteroids", 0f, 5f, "mg-eq"),
-        MedicationItem("magnesium glycinate", 0f, 250f, "mg"),
-        MedicationItem("ketotifen", 0f, 0.5f, "mg"),
-        MedicationItem("desloratidine", 0f, 2.5f, "mg"),
-        MedicationItem("omeprazol", 0f, 10f, "mg"),
-        MedicationItem("pantoprazol", 0f, 40f, "mg"),
-        MedicationItem("itopride", 0f, 50f, "mg"),
-        MedicationItem("alginate", 0f, 1f, "pack"),
-        MedicationItem("mirtazapine", 0f, 7.5f, "mg"),
-        MedicationItem("moxastine teoclate", 0f, 12.5f, "mg")
-    )
 
     // Inserts or updates side effects for a given date.
     fun insertOrUpdateSideEffects(date: String, sideEffects: String) {
