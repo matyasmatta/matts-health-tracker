@@ -1213,7 +1213,7 @@ fun HealthTrackerScreen(openedDay: String) {
         // 5. Update the main UI list and loading state
         unifiedSymptomsUIList = tempUnifiedList.sortedWith(
             compareByDescending<UnifiedSymptomUIItem> { it.wasActiveYesterday }
-                .thenBy { it.name }
+                .thenBy { it.isActive }.thenBy { it.name }
         ) // Pinned items first, then alphabetical
         isLoading = false
     }
@@ -1342,7 +1342,7 @@ fun HealthTrackerScreen(openedDay: String) {
         } else {
             // --- TODO 7: Display Pinned Symptoms ---
             val pinnedSymptoms = remember(unifiedSymptomsUIList) {
-                unifiedSymptomsUIList.filter { it.wasActiveYesterday }
+                unifiedSymptomsUIList.filter { it.wasActiveYesterday || it.isActive }
             }
 
             Row(
