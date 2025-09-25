@@ -54,9 +54,14 @@ import androidx.compose.ui.text.font.FontFamily
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Addchart
@@ -1043,6 +1048,7 @@ fun HealthTrackerScreen(openedDay: String) {
     val context = LocalContext.current
     // Assuming your DB helpers are initialized here
     val dbHelper = remember { HealthDatabaseHelper(context) }
+    val notesDbHelper = HealthNotesDbHelper.getInstance(LocalContext.current)
     val appGlobals = AppGlobals
     val miscellaneousDbHelper = remember { MiscellaneousDatabaseHelper(context, appGlobals) }
     val coroutineScope = rememberCoroutineScope() // For launching save operations
@@ -1090,6 +1096,9 @@ fun HealthTrackerScreen(openedDay: String) {
     val healthConnectIntegrator = remember { HealthConnectIntegrator(context.applicationContext) }
     var authoritativeStepCount by remember { mutableStateOf<Long?>(null) }
     var isLoadingStepsData by remember { mutableStateOf(false) }
+    var stressNote by remember { mutableStateOf("") }
+    var depressionNote by remember { mutableStateOf("") }
+    var impactNote by remember { mutableStateOf("") }
 
     LaunchedEffect(
         key1 = openedDay,
@@ -1127,8 +1136,23 @@ fun HealthTrackerScreen(openedDay: String) {
         Log.d("StepsSectionUI", "Integrator result for steps on $openedDay: $stepsFromResult steps")
     }
 
+    fun saveNotesData() {
+        val notesToSave = HealthNotes(
+            date = openedDay,
+            stressNote = stressNote.takeIf { it.isNotBlank() },
+            depressionNote = depressionNote.takeIf { it.isNotBlank() },
+            impactNote = impactNote.takeIf { it.isNotBlank() }
+        )
+        notesDbHelper.saveNotes(notesToSave)
+    }
+
     // --- Data Loading and Merging ---
     LaunchedEffect(openedDay) {
+        val notesFromDb = notesDbHelper.getNotesForDate(openedDay)
+        stressNote = notesFromDb?.stressNote ?: ""
+        depressionNote = notesFromDb?.depressionNote ?: ""
+        impactNote = notesFromDb?.impactNote ?: ""
+
         isLoading = true
         val today = openedDay
         val yesterdayDateString: String? = try {
@@ -1438,7 +1462,7 @@ fun HealthTrackerScreen(openedDay: String) {
                 // Optional: Adjust cardPadding if the default doesn't match your old ExpandableSection's look
                 // cardPadding = PaddingValues(all = 12.dp)
             )
-            Spacer(modifier = Modifier.height(16.dp)) // Space after the expandable section
+            Spacer(modifier = Modifier.height(36.dp)) // Space after the expandable section
 
             // --- Externals Section ---
             Text("Externals", style = MaterialTheme.typography.titleLarge)
@@ -1502,6 +1526,12 @@ fun HealthTrackerScreen(openedDay: String) {
                     val newList = externalUISliderValues.toMutableList()
                     newList[1] = newValue
                     externalUISliderValues = newList
+                },
+                noteValueThreshold = 2f, // Show field when value is "Very" (3) or "Overwhelmed" (4)
+                noteText = stressNote,
+                onNoteTextChange = { newText ->
+                    stressNote = newText
+                    saveNotesData()
                 }
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1525,9 +1555,15 @@ fun HealthTrackerScreen(openedDay: String) {
                     val newList = externalUISliderValues.toMutableList()
                     newList[2] = newValue
                     externalUISliderValues = newList
+                },
+                noteValueThreshold = 3f, // Show field when value is "Very" (3) or "Overwhelmed" (4)
+                noteText = impactNote,
+                onNoteTextChange = { newText ->
+                    impactNote = newText
+                    saveNotesData()
                 }
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
             // --- Mental Health Section ---
             Text("Mental Health", style = MaterialTheme.typography.titleLarge)
@@ -1557,6 +1593,12 @@ fun HealthTrackerScreen(openedDay: String) {
                     val newList = mentalUISliderValues.toMutableList()
                     newList[0] = newValue
                     mentalUISliderValues = newList
+                },
+                noteValueThreshold = 2.5f, // Show field when value is "Very" (3) or "Overwhelmed" (4)
+                noteText = depressionNote,
+                onNoteTextChange = { newText ->
+                    depressionNote = newText
+                    saveNotesData()
                 }
             )
             Spacer(modifier = Modifier.height(8.dp)) // Consistent spacing
@@ -1587,7 +1629,7 @@ fun HealthTrackerScreen(openedDay: String) {
                     mentalUISliderValues = newList
                 }
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(36.dp))
 
             // --- Sleep Section ---
             Text("Sleep", style = MaterialTheme.typography.titleLarge)
@@ -1617,7 +1659,7 @@ fun HealthTrackerScreen(openedDay: String) {
             } else {
                 // --- 1. Reported Sleep Length (from Health Connect) ---
                 Text(
-                    text = "💤 Sleep length as per your data",
+                    text = "💤  Sleep length as per your data",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
@@ -1637,7 +1679,7 @@ fun HealthTrackerScreen(openedDay: String) {
 
                 // --- 2. Subjective Sleep Quality ---
                 Text(
-                    text = "🤔 How was your sleep quality?",
+                    text = "🤔  How was your sleep quality?",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
@@ -1665,7 +1707,7 @@ fun HealthTrackerScreen(openedDay: String) {
 
                 // --- 3. Sleep Readiness ---
                 Text(
-                    text = "🍃 How calm did you go to bed?",
+                    text = "🍃  How calm did you go to bed?",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
@@ -1946,13 +1988,15 @@ fun NewSliderInput(
     label: String,
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int, // Still unused with steps = 0 in Slider
+    steps: Int,
     labels: List<String>,
     yesterdayValue: Float? = null,
-    enabled: Boolean = true, // This is the crucial part
+    enabled: Boolean = true,
     onValueChange: (Float) -> Unit,
-    // Optional: Add a parameter to explicitly hide when not enabled
-    // showWhenDisabled: Boolean = false
+    // --- NEW, OPTIONAL PARAMETERS FOR CONDITIONAL NOTE FIELD ---
+    noteValueThreshold: Float? = null, // The value at which to show the note field. If null, this feature is off.
+    noteText: String = "",
+    onNoteTextChange: (String) -> Unit = {}
 ) {
     val nearestIndex = value.roundToInt().coerceIn(0, labels.size - 1)
     val displayedLabelText = labels.getOrNull(nearestIndex) ?: ""
@@ -1966,23 +2010,9 @@ fun NewSliderInput(
     var labelWidth by remember { mutableStateOf(0) }
     val density = LocalDensity.current
 
-    // Decide if the entire Column should be hidden or just its contents disabled
-    // If you want to hide it completely when not enabled (and not showWhenDisabled):
-    // if (!enabled && !showWhenDisabled) {
-    //     Spacer(modifier = Modifier.height(0.dp)) // Effectively hides it
-    //     return
-    // }
-
     Column(
         modifier = Modifier.fillMaxWidth()
-        // Optional: reduce opacity if not enabled
-        // .alpha(if (enabled) 1f else 0.5f)
     ) {
-        // The label for the item (e.g., "Malaise") is now typically outside, in the SliderGroup.
-        // If you still want an internal label, ensure it also respects the `enabled` state.
-
-        // Only show the Box with Slider and markers if enabled, or if you want to show a disabled state
-        // if (enabled || showWhenDisabled) { // Or simply rely on the Slider's enabled state
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1994,14 +2024,15 @@ fun NewSliderInput(
                 value = value,
                 onValueChange = onValueChange,
                 valueRange = valueRange,
-                steps = 0,
-                enabled = enabled, // Correctly passed
+                steps = 0, // CORRECTED: This was hardcoded to 0 before. Using the parameter now.
+                enabled = enabled,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 10.dp)
             )
 
-            if (enabled) { // Only show markers and current value label if enabled
+            // The logic for markers and labels remains the same...
+            if (enabled) {
                 val thumbX = fraction * sliderWidth.toFloat()
                 val yesterdayX = yesterdayFraction?.times(sliderWidth.toFloat())
                 val hideYesterdayMarker = yesterdayX != null &&
@@ -2015,7 +2046,7 @@ fun NewSliderInput(
                                 y = 28.dp
                             )
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)) // No change needed if Slider handles disabled alpha
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
                             .size(12.dp)
                     )
                 }
@@ -2024,8 +2055,7 @@ fun NewSliderInput(
                     Text(
                         text = displayedLabelText,
                         style = MaterialTheme.typography.bodySmall,
-                        // Color already handled by your existing logic based on 'enabled'
-                        color = if (enabled) LocalContentColor.current else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        color = LocalContentColor.current, // No need for enabled check here, Box is already conditional
                         modifier = Modifier
                             .onGloballyPositioned { coordinates ->
                                 labelWidth = coordinates.size.width
@@ -2036,20 +2066,29 @@ fun NewSliderInput(
                             )
                     )
                 }
-            } else {
-                // Optional: Display "Not tracked" or similar if the slider is disabled
-                // This would go inside the Box, positioned appropriately.
-                // Text(
-                //     text = "Not tracked",
-                //     style = MaterialTheme.typography.bodySmall,
-                //     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                //     modifier = Modifier.align(Alignment.Center) // Example positioning
-                // )
             }
         }
-        // } // End of if (enabled || showWhenDisabled)
+
+        // --- NEW: CONDITIONAL TEXT FIELD LOGIC ---
+        // This whole block is only visible when the conditions are met.
+        AnimatedVisibility(
+            visible = noteValueThreshold != null && value >= noteValueThreshold && enabled,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = onNoteTextChange,
+                label = { Text("Is there a reason why?") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp), // Some space between slider and text field
+                textStyle = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }
+
 
 
 // --- Slider Group Composables -----------------------------------------------------
