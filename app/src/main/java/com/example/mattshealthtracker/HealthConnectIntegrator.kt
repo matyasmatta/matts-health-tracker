@@ -371,18 +371,14 @@ class HealthConnectIntegrator(private val context: Context) {
                 )
             }
 
-            // Find the single longest sleep session
-            val longestSleepSessionDuration = sleepSessionsResponse.records.maxOfOrNull { session ->
-                Duration.between(
-                    session.startTime,
-                    session.endTime
-                )
-            } // Finds the maximum Duration (Duration is Comparable)
+            // Calculate total sleep including non-overlapping naps
+            val totalSleepDuration =
+                calculateNonOverlappingSleepDuration(sleepSessionsResponse.records)
 
-            if (longestSleepSessionDuration == null || longestSleepSessionDuration.isZero || longestSleepSessionDuration.isNegative) {
+            if (totalSleepDuration == null || totalSleepDuration.isZero || totalSleepDuration.isNegative) {
                 Log.w(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: No valid longest sleep session found (null, zero, or negative) for $dateIso. Found ${sleepSessionsResponse.records.size} records. Falling back to DB."
+                    "[SLEEP DEBUG] PRIMARY: No valid sleep duration calculated (null, zero, or negative) for $dateIso. Found ${sleepSessionsResponse.records.size} records. Falling back to DB."
                 )
                 // Fallback to DB if no valid session is found (e.g., all sessions were zero duration or invalid)
                 return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
@@ -392,7 +388,7 @@ class HealthConnectIntegrator(private val context: Context) {
 
             Log.d(
                 "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: HC calculated LONGEST sleep for $dateIso: ${longestSleepSessionDuration.toMinutes()} minutes. From ${sleepSessionsResponse.records.size} records."
+                "[SLEEP DEBUG] PRIMARY: HC calculated TOTAL non-overlapping sleep for $dateIso: ${totalSleepDuration.toMinutes()} minutes. From ${sleepSessionsResponse.records.size} records."
             )
 
             if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
@@ -401,15 +397,15 @@ class HealthConnectIntegrator(private val context: Context) {
                     "HealthConnectIntegrator",
                     "[SLEEP DEBUG] PRIMARY: Existing DB metric for $dateIso before update: $existingMetric"
                 )
-                // Save the duration of the longest session
+                // Save the duration of the total non-overlapping sleep
                 val metricToSave = existingMetric?.copy(
-                    sleepDurationMillis = longestSleepSessionDuration.toMillis(), // Use longest session
+                    sleepDurationMillis = totalSleepDuration.toMillis(), // Use total non-overlapping sleep
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceDeviceId = getMyDeviceId()
                 ) ?: DailyHealthMetric(
                     date = dateIso,
                     steps = existingMetric?.steps, // Preserve existing steps data
-                    sleepDurationMillis = longestSleepSessionDuration.toMillis(), // Use longest session
+                    sleepDurationMillis = totalSleepDuration.toMillis(), // Use total non-overlapping sleep
                     activeCaloriesBurned = existingMetric?.activeCaloriesBurned, // Preserve existing calories data
                     weightKg = existingMetric?.weightKg, // Preserve existing weight data
                     lastUpdatedTimestamp = System.currentTimeMillis(),
@@ -417,11 +413,11 @@ class HealthConnectIntegrator(private val context: Context) {
                 )
                 Log.d(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Metric to save to DB for $dateIso (longest session): $metricToSave"
+                    "[SLEEP DEBUG] PRIMARY: Metric to save to DB for $dateIso (total non-overlapping sleep): $metricToSave"
                 )
                 dbHelper.insertOrUpdateDailyMetric(metricToSave)
             }
-            longestSleepSessionDuration // Return the longest duration
+            totalSleepDuration // Return the total non-overlapping duration
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
@@ -431,6 +427,96 @@ class HealthConnectIntegrator(private val context: Context) {
             // Fallback to DB if HC read fails for primary
             dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let { Duration.ofMillis(it) }
         }
+    }
+
+    /**
+     * Data class to represent a sleep period
+     */
+    private data class SleepPeriod(
+        val startTime: Instant,
+        val endTime: Instant,
+        val duration: Duration,
+        val originalRecord: SleepSessionRecord
+    )
+
+    /**
+     * Calculates total sleep duration by finding the longest sleep session and adding
+     * any additional non-overlapping sleep periods (naps). This handles cases where
+     * Mi Fitness creates multiple overlapping records for the same sleep period.
+     */
+    private fun calculateNonOverlappingSleepDuration(sleepRecords: List<SleepSessionRecord>): Duration? {
+        if (sleepRecords.isEmpty()) return null
+
+        // Convert records to sleep periods and sort by start time
+        val sleepPeriods = sleepRecords
+            .map { record ->
+                SleepPeriod(
+                    startTime = record.startTime,
+                    endTime = record.endTime,
+                    duration = Duration.between(record.startTime, record.endTime),
+                    originalRecord = record
+                )
+            }
+            .filter { it.duration.toMillis() > 0 } // Filter out zero or negative durations
+            .sortedBy { it.startTime }
+
+        if (sleepPeriods.isEmpty()) return null
+
+        Log.d(
+            "HealthConnectIntegrator",
+            "[SLEEP DEBUG] Processing ${sleepPeriods.size} valid sleep periods"
+        )
+
+        // Find the longest sleep session (main sleep)
+        val longestSleep = sleepPeriods.maxByOrNull { it.duration }
+            ?: return null
+
+        Log.d(
+            "HealthConnectIntegrator",
+            "[SLEEP DEBUG] Longest sleep: ${longestSleep.startTime} to ${longestSleep.endTime} (${longestSleep.duration.toMinutes()} min)"
+        )
+
+        // Start with the longest sleep duration
+        var totalSleepDuration = longestSleep.duration
+        val usedPeriods = mutableSetOf(longestSleep)
+
+        // Check each remaining period for non-overlapping sleep (naps)
+        for (candidate in sleepPeriods) {
+            if (candidate in usedPeriods) continue
+
+            // Check if this candidate overlaps with any already used period
+            val hasOverlap = usedPeriods.any { used ->
+                doPeriodsOverlap(candidate, used)
+            }
+
+            if (!hasOverlap) {
+                Log.d(
+                    "HealthConnectIntegrator",
+                    "[SLEEP DEBUG] Adding non-overlapping sleep: ${candidate.startTime} to ${candidate.endTime} (${candidate.duration.toMinutes()} min)"
+                )
+                totalSleepDuration = totalSleepDuration.plus(candidate.duration)
+                usedPeriods.add(candidate)
+            } else {
+                Log.d(
+                    "HealthConnectIntegrator",
+                    "[SLEEP DEBUG] Skipping overlapping sleep: ${candidate.startTime} to ${candidate.endTime} (${candidate.duration.toMinutes()} min)"
+                )
+            }
+        }
+
+        Log.d(
+            "HealthConnectIntegrator",
+            "[SLEEP DEBUG] Final total sleep duration: ${totalSleepDuration.toMinutes()} minutes from ${usedPeriods.size} periods"
+        )
+        return totalSleepDuration
+    }
+
+    /**
+     * Checks if two sleep periods overlap in time
+     */
+    private fun doPeriodsOverlap(period1: SleepPeriod, period2: SleepPeriod): Boolean {
+        // Periods overlap if one starts before the other ends and vice versa
+        return period1.startTime.isBefore(period2.endTime) && period2.startTime.isBefore(period1.endTime)
     }
 
 
