@@ -1462,7 +1462,7 @@ fun HealthTrackerScreen(openedDay: String) {
                 // Optional: Adjust cardPadding if the default doesn't match your old ExpandableSection's look
                 // cardPadding = PaddingValues(all = 12.dp)
             )
-            Spacer(modifier = Modifier.height(36.dp)) // Space after the expandable section
+            Spacer(modifier = Modifier.height(50.dp)) // Space after the expandable section
 
             // --- Externals Section ---
             Text("Externals", style = MaterialTheme.typography.titleLarge)
@@ -1556,14 +1556,14 @@ fun HealthTrackerScreen(openedDay: String) {
                     newList[2] = newValue
                     externalUISliderValues = newList
                 },
-                noteValueThreshold = 3f, // Show field when value is "Very" (3) or "Overwhelmed" (4)
+                noteValueThreshold = 1.5f, // Show field when value is "Very" (3) or "Overwhelmed" (4)
                 noteText = impactNote,
                 onNoteTextChange = { newText ->
                     impactNote = newText
                     saveNotesData()
                 }
             )
-            Spacer(modifier = Modifier.height(36.dp))
+            Spacer(modifier = Modifier.height(50.dp))
 
             // --- Mental Health Section ---
             Text("Mental Health", style = MaterialTheme.typography.titleLarge)
@@ -1629,7 +1629,7 @@ fun HealthTrackerScreen(openedDay: String) {
                     mentalUISliderValues = newList
                 }
             )
-            Spacer(modifier = Modifier.height(36.dp))
+            Spacer(modifier = Modifier.height(50.dp))
 
             // --- Sleep Section ---
             Text("Sleep", style = MaterialTheme.typography.titleLarge)
@@ -1750,7 +1750,7 @@ fun HealthTrackerScreen(openedDay: String) {
             OutlinedTextField(
                 value = notesUI,
                 onValueChange = { notesUI = it },
-                label = { Text("Daily Notes") },
+                label = { Text("Anything you'd like to add?") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 3
             )
@@ -2079,7 +2079,7 @@ fun NewSliderInput(
             OutlinedTextField(
                 value = noteText,
                 onValueChange = onNoteTextChange,
-                label = { Text("Is there a reason why?") },
+                label = { Text("Is there a specific reason why?") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp), // Some space between slider and text field
