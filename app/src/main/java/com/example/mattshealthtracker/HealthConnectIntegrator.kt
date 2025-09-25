@@ -22,6 +22,8 @@ import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.aggregate.AggregateMetric
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mattshealthtracker.AppGlobals.openedDay
@@ -338,8 +340,12 @@ class HealthConnectIntegrator(private val context: Context) {
                 "HealthConnectIntegrator",
                 "[SLEEP DEBUG] PRIMARY: TimeRangeFilter for $dateIso: ${timeRangeFilter.startTime} to ${timeRangeFilter.endTime}"
             )
-            val request =
-                ReadRecordsRequest(SleepSessionRecord::class, timeRangeFilter = timeRangeFilter)
+
+            // Fixed ReadRecordsRequest constructor
+            val request = ReadRecordsRequest(
+                recordType = SleepSessionRecord::class,
+                timeRangeFilter = timeRangeFilter
+            )
             val sleepSessionsResponse = healthConnectClient?.readRecords(request)
 
             if (sleepSessionsResponse == null || sleepSessionsResponse.records.isEmpty()) {
@@ -363,19 +369,15 @@ class HealthConnectIntegrator(private val context: Context) {
                     "HealthConnectIntegrator",
                     "[SLEEP DEBUG] PRIMARY: Record $index for $dateIso - Start: ${record.startTime}, End: ${record.endTime}, Duration: ${sessionDuration.toMinutes()} min, Title: ${record.title}, Notes: ${record.notes}"
                 )
-                // Optional: Log stages if needed for debugging specific records
-                // record.stages.forEach { stage ->
-                //     Log.d(
-                //         "HealthConnectIntegrator",
-                //         "[SLEEP DEBUG] PRIMARY: Record $index Stage: ${stage.stage} (${stage.startTime} - ${stage.endTime})"
-                //     )
-                // }
             }
 
             // Find the single longest sleep session
-            val longestSleepSessionDuration = sleepSessionsResponse.records
-                .map { session -> Duration.between(session.startTime, session.endTime) }
-                .maxOrNull() // Finds the maximum Duration (Duration is Comparable)
+            val longestSleepSessionDuration = sleepSessionsResponse.records.maxOfOrNull { session ->
+                Duration.between(
+                    session.startTime,
+                    session.endTime
+                )
+            } // Finds the maximum Duration (Duration is Comparable)
 
             if (longestSleepSessionDuration == null || longestSleepSessionDuration.isZero || longestSleepSessionDuration.isNegative) {
                 Log.w(
@@ -384,12 +386,9 @@ class HealthConnectIntegrator(private val context: Context) {
                 )
                 // Fallback to DB if no valid session is found (e.g., all sessions were zero duration or invalid)
                 return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
-                    Duration.ofMillis(
-                        it
-                    )
+                    Duration.ofMillis(it)
                 }
             }
-
 
             Log.d(
                 "HealthConnectIntegrator",
@@ -409,10 +408,10 @@ class HealthConnectIntegrator(private val context: Context) {
                     sourceDeviceId = getMyDeviceId()
                 ) ?: DailyHealthMetric(
                     date = dateIso,
-                    steps = null, // Or existingMetric?.steps
+                    steps = existingMetric?.steps, // Preserve existing steps data
                     sleepDurationMillis = longestSleepSessionDuration.toMillis(), // Use longest session
-                    activeCaloriesBurned = null, // Or existingMetric?.activeCaloriesBurned
-                    weightKg = null, // Or existingMetric?.weightKg
+                    activeCaloriesBurned = existingMetric?.activeCaloriesBurned, // Preserve existing calories data
+                    weightKg = existingMetric?.weightKg, // Preserve existing weight data
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceDeviceId = getMyDeviceId()
                 )
@@ -458,9 +457,15 @@ class HealthConnectIntegrator(private val context: Context) {
 
         return try {
             val timeRangeFilter = createTimeRangeFilter(date)
-            val request = ReadRecordsRequest(StepsRecord::class, timeRangeFilter = timeRangeFilter)
-            val response = healthConnectClient?.readRecords(request)
-            val totalSteps = response?.records?.sumOf { it.count }
+
+
+            val aggregateRequest = AggregateRequest(
+                metrics = setOf(StepsRecord.COUNT_TOTAL),
+                timeRangeFilter = timeRangeFilter
+            )
+            val response = healthConnectClient?.aggregate(aggregateRequest)
+            val totalSteps = response?.get(StepsRecord.COUNT_TOTAL)
+
             Log.d("HealthConnectIntegrator", "PRIMARY: HC steps for $date: $totalSteps")
 
             if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
