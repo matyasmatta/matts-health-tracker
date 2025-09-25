@@ -1078,7 +1078,6 @@ fun HealthTrackerScreen(openedDay: String) {
     val formatter = remember { DateTimeFormatter.ofPattern("yyyy-MM-dd") }
 
     // --- Labels for non-symptom sections (kept as they don't change) ---
-    val externalLabels = listOf("Exercise Level", "Stress Level", "Illness Impact")
     val mentalLabels = listOf("Depression", "Hopelessness")
     val sleepLabels = listOf("Sleep quality", "Sleep readiness", "Sleep length")
 
@@ -1445,7 +1444,7 @@ fun HealthTrackerScreen(openedDay: String) {
             Text("Externals", style = MaterialTheme.typography.titleLarge)
             // Then, in your UI where you want to display it:
             ValueTile(
-                title = "Steps Today",
+                title = "👣 Steps Today",
                 icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                 iconContentDescription = "Steps icon",
                 isLoading = isLoadingStepsData, // Use specific loading flag
@@ -1453,82 +1452,141 @@ fun HealthTrackerScreen(openedDay: String) {
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            externalLabels.forEachIndexed { index, labelString ->
-                Text(
-                    text = labelString,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
-                val standardValueRange = 0f..4f
-                val standardStepLabels = listOf("None", "Very Low", "Low", "Medium", "High")
+            val standardValueRange = 0f..4f
 
-                // *** ADDED: Get yesterday's value for this external item ***
-                val yesterdayExtValue = when (index) {
-                    0 -> yesterdayHealthDataFromDb?.exerciseLevel
-                    1 -> yesterdayHealthDataFromDb?.stressLevel
-                    2 -> yesterdayHealthDataFromDb?.illnessImpact
-                    else -> null
+            // --- 1. Exercise Level ---
+            Text(
+                text = "🏋️  How much did you work out today?",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            NewSliderInput(
+                label = "",
+                value = externalUISliderValues[0],
+                valueRange = standardValueRange,
+                // Custom labels for Exercise
+                labels = listOf(
+                    "Not at all",
+                    "Light walks",
+                    "More walks",
+                    "Some strength too",
+                    "Max Effort"
+                ),
+                steps = 3, // 5 labels = 4 segments = 3 intermediate steps
+                yesterdayValue = yesterdayHealthDataFromDb?.exerciseLevel,
+                enabled = true,
+                onValueChange = { newValue ->
+                    val newList = externalUISliderValues.toMutableList()
+                    newList[0] = newValue
+                    externalUISliderValues = newList
                 }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
 
-                NewSliderInput(
-                    label = "",
-                    value = externalUISliderValues[index],
-                    valueRange = standardValueRange,
-                    steps = standardStepLabels.size - 2,
-                    labels = standardStepLabels,
-                    // *** ADDED: Pass yesterday's value ***
-                    yesterdayValue = yesterdayExtValue,
-                    enabled = true,
-                    onValueChange = { newValue ->
-                        val newList = externalUISliderValues.toMutableList()
-                        newList[index] = newValue
-                        externalUISliderValues = newList
-                    }
-                )
-                if (index < externalLabels.size - 1) {
-                    Spacer(modifier = Modifier.height(8.dp))
+            // --- 2. Stress Level ---
+            Text(
+                text = "😨  How stressed were you today?",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            NewSliderInput(
+                label = "",
+                value = externalUISliderValues[1],
+                valueRange = standardValueRange,
+                // Custom labels for Stress
+                labels = listOf("Serene", "Normal", "Slightly", "Noticeably", "Overwhelmed"),
+                steps = 3, // 5 labels = 3 steps
+                yesterdayValue = yesterdayHealthDataFromDb?.stressLevel,
+                enabled = true,
+                onValueChange = { newValue ->
+                    val newList = externalUISliderValues.toMutableList()
+                    newList[1] = newValue
+                    externalUISliderValues = newList
                 }
-            }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // --- 3. Illness Impact ---
+            Text(
+                text = "🥺  How much did your health impact your day?",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            NewSliderInput(
+                label = "",
+                value = externalUISliderValues[2],
+                valueRange = standardValueRange,
+                // Custom labels for Illness Impact
+                labels = listOf("Not at all", "Slightly", "Noticeably", "Very Much", "Completely"),
+                steps = 3, // 5 labels = 3 steps
+                yesterdayValue = yesterdayHealthDataFromDb?.illnessImpact,
+                enabled = true,
+                onValueChange = { newValue ->
+                    val newList = externalUISliderValues.toMutableList()
+                    newList[2] = newValue
+                    externalUISliderValues = newList
+                }
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
             // --- Mental Health Section ---
             Text("Mental Health", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.height(8.dp))
-            mentalLabels.forEachIndexed { index, labelString ->
-                Text(
-                    text = labelString,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
-                val standardValueRange = 0f..4f
-                val standardStepLabels = listOf("None", "Very Low", "Low", "Moderate", "Severe")
 
-                // *** ADDED: Get yesterday's value for this mental health item ***
-                val yesterdayMentalValue = when (index) {
-                    0 -> yesterdayHealthDataFromDb?.depression
-                    1 -> yesterdayHealthDataFromDb?.hopelessness
-                    else -> null
+            // --- 1. Depression ---
+            Text(
+                text = "🧠  How were you feeling today mentally?", // Explicit label
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            NewSliderInput(
+                label = "",
+                value = mentalUISliderValues[0],
+                valueRange = standardValueRange,
+                steps = 3, // 3 steps for 5 labels
+                labels = listOf(
+                    "Over the moon!",
+                    "Quite well",
+                    "My usual",
+                    "Quite blue",
+                    "Very sad"
+                ),
+                yesterdayValue = yesterdayHealthDataFromDb?.depression,
+                enabled = true,
+                onValueChange = { newValue ->
+                    val newList = mentalUISliderValues.toMutableList()
+                    newList[0] = newValue
+                    mentalUISliderValues = newList
                 }
+            )
+            Spacer(modifier = Modifier.height(8.dp)) // Consistent spacing
 
-                NewSliderInput(
-                    label = "",
-                    value = mentalUISliderValues[index],
-                    valueRange = standardValueRange,
-                    steps = standardStepLabels.size - 2,
-                    labels = standardStepLabels,
-                    // *** ADDED: Pass yesterday's value ***
-                    yesterdayValue = yesterdayMentalValue,
-                    enabled = true,
-                    onValueChange = { newValue ->
-                        val newList = mentalUISliderValues.toMutableList()
-                        newList[index] = newValue
-                        mentalUISliderValues = newList
-                    }
-                )
-                if (index < mentalLabels.size - 1) {
-                    Spacer(modifier = Modifier.height(2.dp)) // Your custom spacing here
+            // --- 2. Hopelessness ---
+            Text(
+                text = "💫  Will this resolve?", // Explicit label
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+            NewSliderInput(
+                label = "",
+                value = mentalUISliderValues[1],
+                valueRange = standardValueRange,
+                steps = 3, // 3 steps for 5 labels
+                labels = listOf(
+                    "Sure it will!",
+                    "At some point",
+                    "Maybe",
+                    "Unlikely",
+                    "GOD no, suffer forever"
+                ),
+                yesterdayValue = yesterdayHealthDataFromDb?.hopelessness,
+                enabled = true,
+                onValueChange = { newValue ->
+                    val newList = mentalUISliderValues.toMutableList()
+                    newList[1] = newValue
+                    mentalUISliderValues = newList
                 }
-            }
+            )
             Spacer(modifier = Modifier.height(16.dp))
 
             // --- Sleep Section ---
@@ -1557,83 +1615,89 @@ fun HealthTrackerScreen(openedDay: String) {
                     Text("Loading sleep data...")
                 }
             } else {
-                sleepLabels.forEachIndexed { index, labelString ->
-                    // Define Text, valueRange, and stepLabelsList as before
-                    Text(
-                        text = labelString,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(bottom = 2.dp)
-                    )
-                    val valueRange = if (labelString == "Sleep length") 0f..12f else 0f..4f
-                    val stepLabelsList = if (labelString == "Reported value: ") {
-                        (0..12).map { "$it hrs" }
-                    } else {
-                        listOf("Very Poor", "Poor", "Okay", "Good", "Excellent")
+                // --- 1. Reported Sleep Length (from Health Connect) ---
+                Text(
+                    text = "💤 Sleep length as per your data",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+                NewSliderInput(
+                    label = "", // External label is the Text above
+                    value = (authoritativeSleepDurationHours ?: 0f).coerceIn(0f, 12f),
+                    valueRange = 0f..12f,
+                    steps = 11, // 12 segments = 11 intermediate steps
+                    labels = (0..12).map { if (it == 1) "$it hr" else "$it hrs" },
+                    yesterdayValue = yesterdayHealthDataFromDb?.sleepLength?.let {
+                        Duration.ofMillis(it.toLong()).toMinutes().toFloat() / 60f
+                    }?.coerceIn(0f, 12f),
+                    enabled = false, // This slider is for display only
+                    onValueChange = { } // No-op
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // --- 2. Subjective Sleep Quality ---
+                Text(
+                    text = "🤔 How was your sleep quality?",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+                NewSliderInput(
+                    label = "",
+                    value = sleepUISliderValues.getOrElse(0) { 0f }, // Use index 0
+                    valueRange = 0f..4f,
+                    steps = 3, // 5 labels = 3 steps
+                    labels = listOf("Very Poor", "Poor", "Okay", "Good", "Excellent"),
+                    yesterdayValue = yesterdayHealthDataFromDb?.sleepQuality?.coerceIn(0f, 4f),
+                    enabled = true, // This slider is editable
+                    onValueChange = { newValue ->
+                        val newList = sleepUISliderValues.toMutableList()
+                        // Ensure the list is large enough before assigning
+                        if (newList.isNotEmpty()) {
+                            newList[0] = newValue
+                        } else {
+                            // Handle case where list might be empty initially
+                            newList.add(newValue)
+                        }
+                        sleepUISliderValues = newList
                     }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
-                    val isSleepLengthField = labelString == "Sleep length"
-
-                    // *** CORRECTED: Define yesterdaySleepValue INSIDE the loop ***
-                    val yesterdaySleepValue =
-                        when (labelString) { // Switched to labelString for clarity, index also works
-                            "Sleep quality" -> yesterdayHealthDataFromDb?.sleepQuality // Assuming this is 0-4
-                            "Sleep length" -> yesterdayHealthDataFromDb?.sleepLength?.let {
-                                Duration.ofMillis(
-                                    it.toLong()
-                                ).toMinutes().toFloat() / 60f
-                            }
-
-                            "Sleep readiness" -> yesterdayHealthDataFromDb?.sleepReadiness // Assuming this is 0-4
-                            else -> null
-                        }?.coerceIn(
-                            valueRange.start,
-                            valueRange.endInclusive
-                        ) // Coerce AFTER potential conversion
-
-                    if (isSleepLengthField) {
-                        // "Sleep length" is ALWAYS reported.
-                        // Main label for the metric:
-                        // No changes to this Text needed, but ensure labelString is used if you remove the outer Text for sleep length name
-                        // For consistency, if you always have a Text(labelString,...) above,
-                        // this specific one might become redundant or could be more detailed.
-                        // Sticking to your current structure:
-
-
-                        NewSliderInput(
-                            label = "", // External label is the Text above. Internal label (displayedLabelText) won't show when disabled.
-                            value = (authoritativeSleepDurationHours ?: 0f).coerceIn(0f, 12f),
-                            valueRange = valueRange, // 0f..12f
-                            steps = 12, // For 0-12 hour labels
-                            labels = stepLabelsList, // (0..12).map { "$it hrs" }
-                            yesterdayValue = yesterdaySleepValue, // Now correctly defined
-                            enabled = false, // ALWAYS disabled
-                            onValueChange = { } // No-op
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                    } else {
-                        // Other sleep sliders (Quality, Readiness) ARE editable
-                        // The Text(labelString, ...) above this block already serves as the title.
-                        val currentSliderValue =
-                            sleepUISliderValues.getOrElse(index) { valueRange.start }
-                        NewSliderInput(
-                            label = "", // Internal label (displayedLabelText) WILL show when enabled
-                            value = currentSliderValue,
-                            valueRange = valueRange,
-                            steps = stepLabelsList.size - 2, // e.g., for 5 labels, steps = 3
-                            labels = stepLabelsList,
-                            yesterdayValue = yesterdaySleepValue, // Now correctly defined
-                            enabled = true,
-                            onValueChange = { newValue ->
-                                val newList = sleepUISliderValues.toMutableList()
-                                newList[index] = newValue
-                                sleepUISliderValues = newList
-                            }
-                        )
+                // --- 3. Sleep Readiness ---
+                Text(
+                    text = "🍃 How calm did you go to bed?",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+                NewSliderInput(
+                    label = "",
+                    value = sleepUISliderValues.getOrElse(1) { 0f }, // Use index 1
+                    valueRange = 0f..4f,
+                    steps = 3, // 5 labels = 3 steps
+                    labels = listOf(
+                        "Couldn't keep my feet down",
+                        "A little restless",
+                        "A bit too fidgety",
+                        "Feeling sleepy enough",
+                        "I was the zen master"
+                    ),
+                    yesterdayValue = yesterdayHealthDataFromDb?.sleepReadiness?.coerceIn(0f, 4f),
+                    enabled = true, // This slider is editable
+                    onValueChange = { newValue ->
+                        val newList = sleepUISliderValues.toMutableList()
+                        // Ensure the list is large enough before assigning
+                        if (newList.size > 1) {
+                            newList[1] = newValue
+                        } else if (newList.size == 1) {
+                            newList.add(newValue)
+                        } else {
+                            // Handle case where list is empty, add placeholders
+                            newList.add(0f) // for quality
+                            newList.add(newValue) // for readiness
+                        }
+                        sleepUISliderValues = newList
                     }
-                    if (index < sleepLabels.size - 1) {
-                        // Spacer(modifier = Modifier.height(1.dp))
-                    }
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp)) // Space AFTER the entire Sleep section
