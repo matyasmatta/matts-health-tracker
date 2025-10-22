@@ -23,11 +23,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card // Added import
@@ -66,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mattshealthtracker.AppUiElements.CollapsibleCard
+import com.example.mattshealthtracker.AppUiElements.QuickStatsCard
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // New Enum for CategoryContext
@@ -101,8 +107,67 @@ fun ExercisesScreen(openedDay: String) {
     )
 
     val coroutineScope = rememberCoroutineScope()
+
+    // --- State for QuickStatsCard ---
+    var stepsToday by remember(openedDay) { mutableStateOf<Long?>(null) }
+    var isLoadingSteps by remember(openedDay) { mutableStateOf(true) }
+
+    var currentWeight by remember(openedDay) { mutableStateOf<Double?>(null) }
+    var isLoadingWeight by remember(openedDay) { mutableStateOf(true) }
+
+    var exerciseMinutesToday by remember(openedDay) { mutableStateOf<Long?>(null) }
+    var isLoadingExercise by remember(openedDay) { mutableStateOf(true) }
+
+    // --- Updated LaunchedEffect to load all data ---
     LaunchedEffect(openedDay) {
+        // This is the original call
         healthConnectViewModel.fetchDataForDay(openedDay)
+
+        // Reset loading states for QuickStatsCard
+        isLoadingSteps = true
+        isLoadingWeight = true
+        isLoadingExercise = true
+
+        // Fetch steps
+        coroutineScope.launch {
+            try {
+                // ASSUMPTION: You have a method 'getStepsForDay'
+                stepsToday =
+                    healthConnectViewModel.healthConnectIntegrator.getStepsForDay(openedDay)
+            } catch (e: Exception) {
+                Log.e("ExercisesScreen", "Failed to load steps", e)
+            } finally {
+                isLoadingSteps = false
+            }
+        }
+
+        // Fetch weight
+        coroutineScope.launch {
+            try {
+                // This method is used by TrendsCard, so it should exist
+                currentWeight =
+                    healthConnectViewModel.healthConnectIntegrator.getWeightForDay(openedDay)
+            } catch (e: Exception) {
+                Log.e("ExercisesScreen", "Failed to load weight", e)
+            } finally {
+                isLoadingWeight = false
+            }
+        }
+
+        // Fetch exercise minutes
+        coroutineScope.launch {
+            try {
+                // ASSUMPTION: You have a method 'getTotalExerciseMinutesForDay'
+                exerciseMinutesToday =
+                    healthConnectViewModel.healthConnectIntegrator.getTotalExerciseMinutesForDay(
+                        openedDay
+                    )
+            } catch (e: Exception) {
+                Log.e("ExercisesScreen", "Failed to load exercise minutes", e)
+            } finally {
+                isLoadingExercise = false
+            }
+        }
     }
 
     DisposableEffect(Unit) {
@@ -194,6 +259,35 @@ fun ExercisesScreen(openedDay: String) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+
+            // --- ADDED QUICK STATS CARD ---
+            QuickStatsCard(
+                stat1 = StatItem(
+                    title = "Steps",
+                    icon = Icons.Default.DirectionsWalk,
+                    valueString = stepsToday?.toString() ?: (if (isLoadingSteps) null else "0"),
+                    isLoading = isLoadingSteps,
+                    iconContentDescription = "Steps today"
+                ),
+                stat2 = StatItem(
+                    title = "Weight",
+                    icon = Icons.Default.MonitorWeight,
+                    valueString = currentWeight?.let { String.format("%.1f kg", it) }
+                        ?: (if (isLoadingWeight) null else "N/A"),
+                    isLoading = isLoadingWeight,
+                    iconContentDescription = "Current weight"
+                ),
+                stat3 = StatItem(
+                    title = "Exercise",
+                    icon = Icons.Default.FitnessCenter, // Changed from Fire to Fitness
+                    valueString = exerciseMinutesToday?.let { "$it min" }
+                        ?: (if (isLoadingExercise) null else "0 min"),
+                    isLoading = isLoadingExercise,
+                    iconContentDescription = "Exercise minutes today"
+                )
+            )
+            // --- END OF QUICK STATS CARD ---
+
             var sectionsRendered = 0
 
             if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Basics.id)) {

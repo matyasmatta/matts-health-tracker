@@ -16,24 +16,203 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
 
+data class StatItem(
+    val title: String,
+    val icon: ImageVector,
+    val valueString: String?,
+    val isLoading: Boolean = false,
+    val iconContentDescription: String? = null,
+    val valueStyle: TextStyle = TextStyle.Default,
+    val valueColor: Color = Color.Unspecified
+)
 object AppUiElements {
+    @Composable
+    fun QuickStatsCard(
+        stat1: StatItem,
+        stat2: StatItem,
+        stat3: StatItem,
+        modifier: Modifier = Modifier
+    ) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Column 1
+                StatColumn(
+                    stat = stat1,
+                    valueStyle = if (stat1.valueStyle != TextStyle.Default) stat1.valueStyle else MaterialTheme.typography.headlineSmall,
+                    valueColor = if (stat1.valueColor != Color.Unspecified) stat1.valueColor else MaterialTheme.colorScheme.primary
+                )
+
+                // Vertical divider
+                Divider(
+                    modifier = Modifier
+                        .height(90.dp) // Adjust height as needed
+                        .width(1.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                )
+
+                // Column 2
+                StatColumn(
+                    stat = stat2,
+                    valueStyle = if (stat2.valueStyle != TextStyle.Default) stat2.valueStyle else MaterialTheme.typography.headlineSmall,
+                    valueColor = if (stat2.valueColor != Color.Unspecified) stat2.valueColor else MaterialTheme.colorScheme.primary
+                )
+
+                // Vertical divider
+                Divider(
+                    modifier = Modifier
+                        .height(90.dp)
+                        .width(1.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                )
+
+                // Column 3
+                StatColumn(
+                    stat = stat3,
+                    valueStyle = if (stat3.valueStyle != TextStyle.Default) stat3.valueStyle else MaterialTheme.typography.headlineSmall,
+                    valueColor = if (stat3.valueColor != Color.Unspecified) stat3.valueColor else MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+
+    /**
+     * A private helper composable to draw a single stat column.
+     * It uses RowScope to be able to apply .weight(1f).
+     */
+    @Composable
+    private fun RowScope.StatColumn(
+        stat: StatItem,
+        valueStyle: TextStyle,
+        valueColor: Color,
+        modifier: Modifier = Modifier
+    ) {
+        Column(
+            modifier = modifier
+                .weight(1f)
+                .padding(vertical = 16.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Icon
+            Icon(
+                imageVector = stat.icon,
+                contentDescription = stat.iconContentDescription ?: stat.title,
+                modifier = Modifier.size(28.dp),
+                tint = valueColor // Tint the icon to match the value
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Value or Loader
+            // We use a fixed-height Box to prevent the layout from "jiggling"
+            // when the content changes from a loader to text.
+            Box(
+                modifier = Modifier.height(32.dp), // Height of headlineSmall
+                contentAlignment = Alignment.Center
+            ) {
+                if (stat.isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                } else {
+                    Text(
+                        text = stat.valueString ?: "N/A",
+                        style = valueStyle,
+                        color = valueColor
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Title
+            Text(
+                text = stat.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    @Composable
+    fun ValueTile(
+        title: String,
+        icon: ImageVector,
+        iconContentDescription: String,
+        isLoading: Boolean,
+        valueString: String?, // The formatted value to display (e.g., "10,532" or "7.5 hrs")
+        modifier: Modifier = Modifier,
+        valueStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.headlineSmall, // Allow customization
+        valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary // Allow customization
+    ) {
+        Card(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = iconContentDescription,
+                    modifier = Modifier.size(36.dp),
+                    tint = MaterialTheme.colorScheme.primary // Icon tint, can also be a parameter
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                    } else {
+                        Text(
+                            text = valueString ?: "N/A",
+                            style = valueStyle,
+                            color = valueColor
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     @Composable
     fun CollapsibleCard(

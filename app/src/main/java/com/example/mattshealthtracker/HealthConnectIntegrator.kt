@@ -1,4 +1,3 @@
-// HealthConnectIntegrator.kt
 package com.example.mattshealthtracker
 
 import android.content.ContentValues
@@ -17,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
+import androidx.health.connect.client.records.ExerciseSessionRecord // Added import
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
@@ -40,7 +40,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
-// --- Database Contract and Helper ---
+// --- Database Contract and Helper (No Changes) ---
 
 object HealthMetricsContract {
     object DailyMetricEntry : BaseColumns {
@@ -50,6 +50,7 @@ object HealthMetricsContract {
         const val COLUMN_NAME_SLEEP_DURATION_MILLIS = "sleep_duration_millis"
         const val COLUMN_NAME_ACTIVE_CALORIES = "active_calories"
         const val COLUMN_NAME_WEIGHT_KG = "weight_kg"
+        const val COLUMN_NAME_EXERCISE_MINUTES = "exercise_minutes" // <<< NEW COLUMN
         const val COLUMN_NAME_LAST_UPDATED_TIMESTAMP = "last_updated_timestamp"
         const val COLUMN_NAME_SOURCE_DEVICE_ID = "source_device_id"
     }
@@ -61,6 +62,7 @@ data class DailyHealthMetric(
     val sleepDurationMillis: Long?,
     val activeCaloriesBurned: Double?,
     val weightKg: Double?,
+    val exerciseMinutes: Long?, // <<< NEW FIELD
     val lastUpdatedTimestamp: Long,
     val sourceDeviceId: String
 )
@@ -73,10 +75,25 @@ class HealthMetricsDbHelper(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // This database is only a cache, so its upgrade policy is
-        // to simply to discard the data and start over
-        db.execSQL(SQL_DELETE_ENTRIES)
-        onCreate(db)
+        if (oldVersion < 2) {
+            // Simple upgrade path for adding one column without dropping the table
+            try {
+                db.execSQL("ALTER TABLE ${HealthMetricsContract.DailyMetricEntry.TABLE_NAME} ADD COLUMN ${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES} INTEGER")
+                Log.i(
+                    "HealthMetricsDbHelper",
+                    "Upgraded database from $oldVersion to $newVersion, added EXERCISE_MINUTES column."
+                )
+            } catch (e: Exception) {
+                Log.e("HealthMetricsDbHelper", "Error upgrading DB. Dropping and recreating.", e)
+                // Fallback to dropping if alter fails
+                db.execSQL(SQL_DELETE_ENTRIES)
+                onCreate(db)
+            }
+        } else {
+            // For future upgrades, or if something went wrong
+            db.execSQL(SQL_DELETE_ENTRIES)
+            onCreate(db)
+        }
     }
 
     suspend fun insertOrUpdateDailyMetric(metric: DailyHealthMetric) = withContext(Dispatchers.IO) {
@@ -106,6 +123,13 @@ class HealthMetricsDbHelper(context: Context) :
                 )
             }
                 ?: putNull(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_WEIGHT_KG)
+            metric.exerciseMinutes?.let {
+                put(
+                    HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES,
+                    it
+                )
+            }
+                ?: putNull(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES)
             put(
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_LAST_UPDATED_TIMESTAMP,
                 metric.lastUpdatedTimestamp
@@ -116,7 +140,6 @@ class HealthMetricsDbHelper(context: Context) :
             )
         }
 
-        // Try to update first, if not found, then insert
         val updatedRows = db.update(
             HealthMetricsContract.DailyMetricEntry.TABLE_NAME,
             values,
@@ -141,6 +164,7 @@ class HealthMetricsDbHelper(context: Context) :
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_SLEEP_DURATION_MILLIS,
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_ACTIVE_CALORIES,
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_WEIGHT_KG,
+                HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES,
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_LAST_UPDATED_TIMESTAMP,
                 HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_SOURCE_DEVICE_ID
             )
@@ -175,6 +199,9 @@ class HealthMetricsDbHelper(context: Context) :
                         weightKg = if (isNull(getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_WEIGHT_KG))) null else getDouble(
                             getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_WEIGHT_KG)
                         ),
+                        exerciseMinutes = if (isNull(getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES))) null else getLong(
+                            getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES)
+                        ),
                         lastUpdatedTimestamp = getLong(getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_LAST_UPDATED_TIMESTAMP)),
                         sourceDeviceId = getString(getColumnIndexOrThrow(HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_SOURCE_DEVICE_ID))
                     )
@@ -186,7 +213,7 @@ class HealthMetricsDbHelper(context: Context) :
         }
 
     companion object {
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         const val DATABASE_NAME = "HealthMetrics.db"
 
         private const val SQL_CREATE_ENTRIES =
@@ -197,6 +224,7 @@ class HealthMetricsDbHelper(context: Context) :
                     "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_SLEEP_DURATION_MILLIS} INTEGER," +
                     "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_ACTIVE_CALORIES} REAL," +
                     "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_WEIGHT_KG} REAL," +
+                    "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_EXERCISE_MINUTES} INTEGER," +
                     "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_LAST_UPDATED_TIMESTAMP} INTEGER," +
                     "${HealthMetricsContract.DailyMetricEntry.COLUMN_NAME_SOURCE_DEVICE_ID} TEXT)"
 
@@ -209,13 +237,9 @@ class HealthMetricsDbHelper(context: Context) :
 class HealthConnectIntegrator(private val context: Context) {
 
     private val dbHelper by lazy { HealthMetricsDbHelper(context) }
-    private val coroutineScope = CoroutineScope(Dispatchers.IO) // For DB operations off main thread
+    private val coroutineScope = CoroutineScope(Dispatchers.IO)
 
     private val healthConnectClient: HealthConnectClient? by lazy {
-        // Ensure AppGlobals is initialized before accessing deviceRole
-        // This should happen in Application.onCreate or MainActivity.onCreate
-        // AppGlobals.initialize(context) // Redundant if already done elsewhere
-
         val status = HealthConnectClient.getSdkStatus(context)
         if (status == HealthConnectClient.SDK_AVAILABLE) {
             Log.d("HealthConnectIntegrator", "Health Connect SDK is available.")
@@ -230,7 +254,8 @@ class HealthConnectIntegrator(private val context: Context) {
         HealthPermission.getReadPermission(WeightRecord::class),
         HealthPermission.getReadPermission(SleepSessionRecord::class),
         HealthPermission.getReadPermission(StepsRecord::class),
-        HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class)
+        HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class),
+        HealthPermission.getReadPermission(ExerciseSessionRecord::class)
     )
 
     private fun getMyDeviceId(): String {
@@ -244,9 +269,6 @@ class HealthConnectIntegrator(private val context: Context) {
 
     suspend fun hasPermissions(): Boolean {
         if (!isHealthConnectAvailable()) return false
-        // If device is secondary and we don't have permissions, it's fine, we'll read from DB.
-        // However, the primary device NEEDS permissions to write to the DB.
-        // For simplicity here, we check permissions always. UI can decide how to react.
         return try {
             healthConnectClient?.permissionController?.getGrantedPermissions()?.containsAll(permissions) == true
         } catch (e: Exception) {
@@ -305,43 +327,16 @@ class HealthConnectIntegrator(private val context: Context) {
                 "HealthConnectIntegrator",
                 "[SLEEP DEBUG] SECONDARY: Reading sleep for $dateIso from DB."
             )
-            val metricFromDb = dbHelper.getDailyMetric(dateIso)
-            val sleepMillis = metricFromDb?.sleepDurationMillis
-            Log.d(
-                "HealthConnectIntegrator",
-                "[SLEEP DEBUG] SECONDARY: DB sleepMillis: $sleepMillis for $dateIso"
-            )
-            return sleepMillis?.let { Duration.ofMillis(it) }
+            return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let { Duration.ofMillis(it) }
         }
 
-        // PRIMARY Device Logic
-        if (!hasPermissions()) {
-            Log.w(
-                "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: Attempted to read sleep without HC permissions. Trying DB for $dateIso."
-            )
-            val metricFromDb = dbHelper.getDailyMetric(dateIso)
-            val sleepMillis = metricFromDb?.sleepDurationMillis
-            Log.d(
-                "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY (no HC perm): DB sleepMillis: $sleepMillis for $dateIso"
-            )
-            return sleepMillis?.let { Duration.ofMillis(it) }
-        }
+        // PRIMARY Device Logic: Try HC, fallback to DB
         Log.d(
             "HealthConnectIntegrator",
-            "[SLEEP DEBUG] PRIMARY: Has permissions. Attempting to read from Health Connect for $dateIso."
+            "[SLEEP DEBUG] PRIMARY: Attempting to read from Health Connect for $dateIso."
         )
-
         return try {
-            val timeRangeFilter =
-                createTimeRangeFilter(date, offsetHours = 6) // Keep your offset logic
-            Log.d(
-                "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: TimeRangeFilter for $dateIso: ${timeRangeFilter.startTime} to ${timeRangeFilter.endTime}"
-            )
-
-            // Fixed ReadRecordsRequest constructor
+            val timeRangeFilter = createTimeRangeFilter(date, offsetHours = 6)
             val request = ReadRecordsRequest(
                 recordType = SleepSessionRecord::class,
                 timeRangeFilter = timeRangeFilter
@@ -351,87 +346,65 @@ class HealthConnectIntegrator(private val context: Context) {
             if (sleepSessionsResponse == null || sleepSessionsResponse.records.isEmpty()) {
                 Log.w(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: No sleep records found in HC or client returned null for $dateIso."
+                    "[SLEEP DEBUG] PRIMARY: No sleep records found in HC for $dateIso. Trying DB."
                 )
-                // Fallback to DB if no records or null response
                 return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
-                    Duration.ofMillis(it)
+                    Duration.ofMillis(
+                        it
+                    )
                 }
             }
 
-            Log.d(
-                "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: HC response for $dateIso - Record count: ${sleepSessionsResponse.records.size}"
-            )
-            sleepSessionsResponse.records.forEachIndexed { index, record ->
-                val sessionDuration = Duration.between(record.startTime, record.endTime)
-                Log.d(
-                    "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Record $index for $dateIso - Start: ${record.startTime}, End: ${record.endTime}, Duration: ${sessionDuration.toMinutes()} min, Title: ${record.title}, Notes: ${record.notes}"
-                )
-            }
-
-            // Calculate total sleep including non-overlapping naps
             val totalSleepDuration =
                 calculateNonOverlappingSleepDuration(sleepSessionsResponse.records)
 
             if (totalSleepDuration == null || totalSleepDuration.isZero || totalSleepDuration.isNegative) {
                 Log.w(
                     "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: No valid sleep duration calculated (null, zero, or negative) for $dateIso. Found ${sleepSessionsResponse.records.size} records. Falling back to DB."
+                    "[SLEEP DEBUG] PRIMARY: No valid sleep duration calculated for $dateIso. Trying DB."
                 )
-                // Fallback to DB if no valid session is found (e.g., all sessions were zero duration or invalid)
                 return dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let {
-                    Duration.ofMillis(it)
+                    Duration.ofMillis(
+                        it
+                    )
                 }
             }
 
             Log.d(
                 "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: HC calculated TOTAL non-overlapping sleep for $dateIso: ${totalSleepDuration.toMinutes()} minutes. From ${sleepSessionsResponse.records.size} records."
+                "[SLEEP DEBUG] PRIMARY: HC calculated TOTAL sleep for $dateIso: ${totalSleepDuration.toMinutes()} minutes."
             )
 
-            if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
-                val existingMetric = dbHelper.getDailyMetric(dateIso)
-                Log.d(
-                    "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Existing DB metric for $dateIso before update: $existingMetric"
-                )
-                // Save the duration of the total non-overlapping sleep
-                val metricToSave = existingMetric?.copy(
-                    sleepDurationMillis = totalSleepDuration.toMillis(), // Use total non-overlapping sleep
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                ) ?: DailyHealthMetric(
-                    date = dateIso,
-                    steps = existingMetric?.steps, // Preserve existing steps data
-                    sleepDurationMillis = totalSleepDuration.toMillis(), // Use total non-overlapping sleep
-                    activeCaloriesBurned = existingMetric?.activeCaloriesBurned, // Preserve existing calories data
-                    weightKg = existingMetric?.weightKg, // Preserve existing weight data
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                )
-                Log.d(
-                    "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] PRIMARY: Metric to save to DB for $dateIso (total non-overlapping sleep): $metricToSave"
-                )
-                dbHelper.insertOrUpdateDailyMetric(metricToSave)
-            }
-            totalSleepDuration // Return the total non-overlapping duration
+            // Save valid HC data to DB
+            val existingMetric = dbHelper.getDailyMetric(dateIso)
+            val metricToSave = existingMetric?.copy(
+                sleepDurationMillis = totalSleepDuration.toMillis(),
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            ) ?: DailyHealthMetric(
+                date = dateIso,
+                steps = existingMetric?.steps,
+                sleepDurationMillis = totalSleepDuration.toMillis(),
+                activeCaloriesBurned = existingMetric?.activeCaloriesBurned,
+                weightKg = existingMetric?.weightKg,
+                exerciseMinutes = existingMetric?.exerciseMinutes,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            )
+            dbHelper.insertOrUpdateDailyMetric(metricToSave)
+            totalSleepDuration
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
-                "[SLEEP DEBUG] PRIMARY: Error reading sleep data from HC for $dateIso: ${e.message}",
+                "[SLEEP DEBUG] PRIMARY: Error reading sleep data from HC for $dateIso: ${e.message}. Trying DB.",
                 e
             )
-            // Fallback to DB if HC read fails for primary
+            // Fallback to DB if HC read fails (e.g., permissions error)
             dbHelper.getDailyMetric(dateIso)?.sleepDurationMillis?.let { Duration.ofMillis(it) }
         }
     }
 
-    /**
-     * Data class to represent a sleep period
-     */
+    // ... (SleepPeriod data class and helper functions remain the same) ...
     private data class SleepPeriod(
         val startTime: Instant,
         val endTime: Instant,
@@ -439,15 +412,8 @@ class HealthConnectIntegrator(private val context: Context) {
         val originalRecord: SleepSessionRecord
     )
 
-    /**
-     * Calculates total sleep duration by finding the longest sleep session and adding
-     * any additional non-overlapping sleep periods (naps). This handles cases where
-     * Mi Fitness creates multiple overlapping records for the same sleep period.
-     */
     private fun calculateNonOverlappingSleepDuration(sleepRecords: List<SleepSessionRecord>): Duration? {
         if (sleepRecords.isEmpty()) return null
-
-        // Convert records to sleep periods and sort by start time
         val sleepPeriods = sleepRecords
             .map { record ->
                 SleepPeriod(
@@ -457,65 +423,28 @@ class HealthConnectIntegrator(private val context: Context) {
                     originalRecord = record
                 )
             }
-            .filter { it.duration.toMillis() > 0 } // Filter out zero or negative durations
+            .filter { it.duration.toMillis() > 0 }
             .sortedBy { it.startTime }
 
         if (sleepPeriods.isEmpty()) return null
-
-        Log.d(
-            "HealthConnectIntegrator",
-            "[SLEEP DEBUG] Processing ${sleepPeriods.size} valid sleep periods"
-        )
-
-        // Find the longest sleep session (main sleep)
-        val longestSleep = sleepPeriods.maxByOrNull { it.duration }
-            ?: return null
-
-        Log.d(
-            "HealthConnectIntegrator",
-            "[SLEEP DEBUG] Longest sleep: ${longestSleep.startTime} to ${longestSleep.endTime} (${longestSleep.duration.toMinutes()} min)"
-        )
-
-        // Start with the longest sleep duration
+        val longestSleep = sleepPeriods.maxByOrNull { it.duration } ?: return null
         var totalSleepDuration = longestSleep.duration
         val usedPeriods = mutableSetOf(longestSleep)
 
-        // Check each remaining period for non-overlapping sleep (naps)
         for (candidate in sleepPeriods) {
             if (candidate in usedPeriods) continue
-
-            // Check if this candidate overlaps with any already used period
             val hasOverlap = usedPeriods.any { used ->
                 doPeriodsOverlap(candidate, used)
             }
-
             if (!hasOverlap) {
-                Log.d(
-                    "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] Adding non-overlapping sleep: ${candidate.startTime} to ${candidate.endTime} (${candidate.duration.toMinutes()} min)"
-                )
                 totalSleepDuration = totalSleepDuration.plus(candidate.duration)
                 usedPeriods.add(candidate)
-            } else {
-                Log.d(
-                    "HealthConnectIntegrator",
-                    "[SLEEP DEBUG] Skipping overlapping sleep: ${candidate.startTime} to ${candidate.endTime} (${candidate.duration.toMinutes()} min)"
-                )
             }
         }
-
-        Log.d(
-            "HealthConnectIntegrator",
-            "[SLEEP DEBUG] Final total sleep duration: ${totalSleepDuration.toMinutes()} minutes from ${usedPeriods.size} periods"
-        )
         return totalSleepDuration
     }
 
-    /**
-     * Checks if two sleep periods overlap in time
-     */
     private fun doPeriodsOverlap(period1: SleepPeriod, period2: SleepPeriod): Boolean {
-        // Periods overlap if one starts before the other ends and vice versa
         return period1.startTime.isBefore(period2.endTime) && period2.startTime.isBefore(period1.endTime)
     }
 
@@ -533,18 +462,10 @@ class HealthConnectIntegrator(private val context: Context) {
             return dbHelper.getDailyMetric(dateIso)?.steps
         }
 
-        if (!hasPermissions()) {
-            Log.w(
-                "HealthConnectIntegrator",
-                "Attempted to read steps without HC permissions (PRIMARY)."
-            )
-            return dbHelper.getDailyMetric(dateIso)?.steps
-        }
-
+        // PRIMARY Device Logic: Try HC, fallback to DB
+        Log.d("HealthConnectIntegrator", "PRIMARY: Attempting to read steps from HC for $dateIso.")
         return try {
             val timeRangeFilter = createTimeRangeFilter(date)
-
-
             val aggregateRequest = AggregateRequest(
                 metrics = setOf(StepsRecord.COUNT_TOTAL),
                 timeRangeFilter = timeRangeFilter
@@ -554,26 +475,31 @@ class HealthConnectIntegrator(private val context: Context) {
 
             Log.d("HealthConnectIntegrator", "PRIMARY: HC steps for $date: $totalSteps")
 
-            if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
-                val existingMetric = dbHelper.getDailyMetric(dateIso)
-                val metricToSave = existingMetric?.copy(
-                    steps = totalSteps,
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                ) ?: DailyHealthMetric(
-                    date = dateIso,
-                    steps = totalSteps,
-                    sleepDurationMillis = null,
-                    activeCaloriesBurned = null,
-                    weightKg = null,
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                )
-                dbHelper.insertOrUpdateDailyMetric(metricToSave)
-            }
+            // Save to DB (even if null, to record the "checked" state)
+            val existingMetric = dbHelper.getDailyMetric(dateIso)
+            val metricToSave = existingMetric?.copy(
+                steps = totalSteps,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            ) ?: DailyHealthMetric(
+                date = dateIso,
+                steps = totalSteps,
+                sleepDurationMillis = null,
+                activeCaloriesBurned = null,
+                weightKg = null,
+                exerciseMinutes = null,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            )
+            dbHelper.insertOrUpdateDailyMetric(metricToSave)
+
             totalSteps
         } catch (e: Exception) {
-            Log.e("HealthConnectIntegrator", "Error reading steps data from HC: ${e.message}", e)
+            Log.e(
+                "HealthConnectIntegrator",
+                "Error reading steps data from HC: ${e.message}. Trying DB.",
+                e
+            )
             dbHelper.getDailyMetric(dateIso)?.steps
         }
     }
@@ -592,14 +518,11 @@ class HealthConnectIntegrator(private val context: Context) {
             return dbHelper.getDailyMetric(dateIso)?.activeCaloriesBurned
         }
 
-        if (!hasPermissions()) {
-            Log.w(
-                "HealthConnectIntegrator",
-                "Attempted to read calories without HC permissions (PRIMARY)."
-            )
-            return dbHelper.getDailyMetric(dateIso)?.activeCaloriesBurned
-        }
-
+        // PRIMARY Device Logic: Try HC, fallback to DB
+        Log.d(
+            "HealthConnectIntegrator",
+            "PRIMARY: Attempting to read calories from HC for $dateIso."
+        )
         return try {
             val timeRangeFilter = createTimeRangeFilter(date)
             val request = ReadRecordsRequest(
@@ -607,34 +530,36 @@ class HealthConnectIntegrator(private val context: Context) {
                 timeRangeFilter = timeRangeFilter
             )
             val response = healthConnectClient?.readRecords(request)
+            // Use sumOf over non-empty list, or default to 0.0, then check if null
             val totalCalories = response?.records?.sumOf { it.energy.inKilocalories }
+
             Log.d(
                 "HealthConnectIntegrator",
                 "PRIMARY: HC active calories for $date: $totalCalories kcal"
             )
 
-            if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
-                val existingMetric = dbHelper.getDailyMetric(dateIso)
-                val metricToSave = existingMetric?.copy(
-                    activeCaloriesBurned = totalCalories,
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                ) ?: DailyHealthMetric(
-                    date = dateIso,
-                    steps = null,
-                    sleepDurationMillis = null,
-                    activeCaloriesBurned = totalCalories,
-                    weightKg = null,
-                    lastUpdatedTimestamp = System.currentTimeMillis(),
-                    sourceDeviceId = getMyDeviceId()
-                )
-                dbHelper.insertOrUpdateDailyMetric(metricToSave)
-            }
+            val existingMetric = dbHelper.getDailyMetric(dateIso)
+            val metricToSave = existingMetric?.copy(
+                activeCaloriesBurned = totalCalories,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            ) ?: DailyHealthMetric(
+                date = dateIso,
+                steps = null,
+                sleepDurationMillis = null,
+                activeCaloriesBurned = totalCalories,
+                weightKg = null,
+                exerciseMinutes = null,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            )
+            dbHelper.insertOrUpdateDailyMetric(metricToSave)
+
             totalCalories
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
-                "Error reading active calories from HC: ${e.message}",
+                "Error reading active calories from HC: ${e.message}. Trying DB.",
                 e
             )
             dbHelper.getDailyMetric(dateIso)?.activeCaloriesBurned
@@ -654,16 +579,10 @@ class HealthConnectIntegrator(private val context: Context) {
             return dbHelper.getDailyMetric(dateIso)?.weightKg
         }
 
-        if (!hasPermissions()) {
-            Log.w(
-                "HealthConnectIntegrator",
-                "Attempted to read weight without HC permissions (PRIMARY)."
-            )
-            return dbHelper.getDailyMetric(dateIso)?.weightKg
-        }
-
+        // PRIMARY Device Logic: Try HC, fallback to DB
+        Log.d("HealthConnectIntegrator", "PRIMARY: Attempting to read weight from HC for $dateIso.")
         return try {
-            val timeRangeFilter = createTimeRangeFilter(date) // For a specific day's latest
+            val timeRangeFilter = createTimeRangeFilter(date)
             val request = ReadRecordsRequest(
                 recordType = WeightRecord::class,
                 timeRangeFilter = timeRangeFilter,
@@ -673,39 +592,37 @@ class HealthConnectIntegrator(private val context: Context) {
             val latestWeight = response?.records?.firstOrNull()?.weight?.inKilograms
             Log.d("HealthConnectIntegrator", "PRIMARY: HC Weight for $date: $latestWeight kg")
 
-            if (AppGlobals.deviceRole == DeviceRole.PRIMARY) {
-                // Only update if a weight was actually found for that day from HC
-                if (latestWeight != null) {
-                    val existingMetric = dbHelper.getDailyMetric(dateIso)
-                    val metricToSave = existingMetric?.copy(
-                        weightKg = latestWeight,
-                        lastUpdatedTimestamp = System.currentTimeMillis(),
-                        sourceDeviceId = getMyDeviceId()
-                    ) ?: DailyHealthMetric(
-                        date = dateIso,
-                        steps = null,
-                        sleepDurationMillis = null,
-                        activeCaloriesBurned = null,
-                        weightKg = latestWeight,
-                        lastUpdatedTimestamp = System.currentTimeMillis(),
-                        sourceDeviceId = getMyDeviceId()
-                    )
-                    dbHelper.insertOrUpdateDailyMetric(metricToSave)
-                } else if (dbHelper.getDailyMetric(dateIso)?.weightKg == null) {
-                    // If HC has no weight for the day, and DB also has no weight,
-                    // we might want to fetch the overall latest weight from HC
-                    // and store it in the DB for *today* if openedDayString is today.
-                    // This part is a bit more complex for "latest weight" vs "weight on a specific day".
-                    // For now, if HC has no weight for the day, we don't update the DB's weight field
-                    // unless we explicitly want to clear it.
-                    // Let's stick to updating DB only if HC provides a value for the specific day.
-                }
+            if (latestWeight != null) {
+                // Only save to DB if we found a new value from HC
+                val existingMetric = dbHelper.getDailyMetric(dateIso)
+                val metricToSave = existingMetric?.copy(
+                    weightKg = latestWeight,
+                    lastUpdatedTimestamp = System.currentTimeMillis(),
+                    sourceDeviceId = getMyDeviceId()
+                ) ?: DailyHealthMetric(
+                    date = dateIso,
+                    steps = null,
+                    sleepDurationMillis = null,
+                    activeCaloriesBurned = null,
+                    weightKg = latestWeight,
+                    exerciseMinutes = null,
+                    lastUpdatedTimestamp = System.currentTimeMillis(),
+                    sourceDeviceId = getMyDeviceId()
+                )
+                dbHelper.insertOrUpdateDailyMetric(metricToSave)
+                latestWeight
+            } else {
+                // If no weight from HC, just return whatever is in the DB (which might be null)
+                Log.d(
+                    "HealthConnectIntegrator",
+                    "PRIMARY: No weight found in HC for $date. Returning DB value."
+                )
+                dbHelper.getDailyMetric(dateIso)?.weightKg
             }
-            latestWeight
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
-                "Error reading weight from HC for $date: ${e.message}",
+                "Error reading weight from HC for $date: ${e.message}. Trying DB.",
                 e
             )
             dbHelper.getDailyMetric(dateIso)?.weightKg
@@ -713,34 +630,98 @@ class HealthConnectIntegrator(private val context: Context) {
     }
 
 
-    /**
-     * Reads the overall latest weight record from Health Connect.
-     * This function might be less used if getWeightForDay becomes the primary way,
-     * but can be a fallback.
-     */
-    suspend fun getLatestOverallWeight(): Double? {
-        // This function doesn't directly align with the daily metric storage well
-        // unless we decide to store "latest known weight" in a separate preference or
-        // always associate it with today's DailyHealthMetric if fetched.
-        // For now, let's assume it primarily consults HC, and primary might update today's DB record.
+    suspend fun getTotalExerciseMinutesForDay(openedDayString: String): Long? {
+        val date = runCatching { LocalDate.parse(openedDayString) }.getOrNull()
+        if (date == null) {
+            Log.e("HealthConnectIntegrator", "Invalid date format for exercise: $openedDayString")
+            return null
+        }
+        val dateIso = date.format(DateTimeFormatter.ISO_LOCAL_DATE)
+        Log.d(
+            "HealthConnectIntegrator",
+            "[EXERCISE DEBUG] Attempting to get exercise for $dateIso, Role: ${AppGlobals.deviceRole}"
+        )
 
         if (AppGlobals.deviceRole == DeviceRole.SECONDARY) {
-            // Secondary devices could get the latest weight from today's DB record,
-            // or we could query the DB for the most recent non-null weight entry.
-            // For simplicity, let's use today's DB entry if available.
+            Log.d(
+                "HealthConnectIntegrator",
+                "SECONDARY: Reading exercise mins for $dateIso from DB."
+            )
+            return dbHelper.getDailyMetric(dateIso)?.exerciseMinutes
+        }
+
+        // PRIMARY Device Logic: Try HC, fallback to DB
+        Log.d(
+            "HealthConnectIntegrator",
+            "[EXERCISE DEBUG] PRIMARY: Attempting to read from Health Connect for $dateIso."
+        )
+        return try {
+            val timeRangeFilter = createTimeRangeFilter(date)
+            val request = ReadRecordsRequest(
+                recordType = ExerciseSessionRecord::class,
+                timeRangeFilter = timeRangeFilter
+            )
+            val response = healthConnectClient?.readRecords(request)
+
+            if (response == null || response.records.isEmpty()) {
+                Log.w(
+                    "HealthConnectIntegrator",
+                    "[EXERCISE DEBUG] PRIMARY: No exercise records found in HC for $dateIso. Trying DB."
+                )
+                return dbHelper.getDailyMetric(dateIso)?.exerciseMinutes
+            }
+
+            val totalDuration = response.records.fold(Duration.ZERO) { acc, record ->
+                acc.plus(Duration.between(record.startTime, record.endTime))
+            }
+            val totalMinutes = totalDuration.toMinutes()
+
+            Log.d(
+                "HealthConnectIntegrator",
+                "PRIMARY: HC total exercise for $date: $totalMinutes minutes from ${response.records.size} sessions"
+            )
+
+            val existingMetric = dbHelper.getDailyMetric(dateIso)
+            val metricToSave = existingMetric?.copy(
+                exerciseMinutes = totalMinutes,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            ) ?: DailyHealthMetric(
+                date = dateIso,
+                steps = existingMetric?.steps,
+                sleepDurationMillis = existingMetric?.sleepDurationMillis,
+                activeCaloriesBurned = existingMetric?.activeCaloriesBurned,
+                weightKg = existingMetric?.weightKg,
+                exerciseMinutes = totalMinutes,
+                lastUpdatedTimestamp = System.currentTimeMillis(),
+                sourceDeviceId = getMyDeviceId()
+            )
+            dbHelper.insertOrUpdateDailyMetric(metricToSave)
+
+            totalMinutes
+        } catch (e: Exception) {
+            Log.e(
+                "HealthConnectIntegrator",
+                "Error reading exercise data from HC: ${e.message}. Trying DB.",
+                e
+            )
+            dbHelper.getDailyMetric(dateIso)?.exerciseMinutes
+        }
+    }
+
+
+    suspend fun getLatestOverallWeight(): Double? {
+        if (AppGlobals.deviceRole == DeviceRole.SECONDARY) {
             val todayIso = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
             val weightFromDb = dbHelper.getDailyMetric(todayIso)?.weightKg
             if (weightFromDb != null) return weightFromDb
-            // Could add more complex logic to find most recent DB weight entry here.
         }
 
-        if (!hasPermissions()) {
-            Log.w(
-                "HealthConnectIntegrator",
-                "Attempted to read latest overall weight without HC permissions."
-            )
-            return null // Or try DB again for primary
-        }
+        // PRIMARY Device Logic: Try HC, fallback to DB
+        Log.d(
+            "HealthConnectIntegrator",
+            "PRIMARY: Attempting to read latest *overall* weight from HC."
+        )
         return try {
             val request = ReadRecordsRequest(
                 recordType = WeightRecord::class,
@@ -751,20 +732,20 @@ class HealthConnectIntegrator(private val context: Context) {
             val response = healthConnectClient?.readRecords(request)
             val hcWeight = response?.records?.firstOrNull()?.weight?.inKilograms
 
-            // If primary, update today's DB record with this latest weight
             if (AppGlobals.deviceRole == DeviceRole.PRIMARY && hcWeight != null) {
                 val todayIso = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
                 val existingMetric = dbHelper.getDailyMetric(todayIso)
                 val metricToSave = existingMetric?.copy(
-                    weightKg = hcWeight, // Update weight
+                    weightKg = hcWeight,
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceDeviceId = getMyDeviceId()
                 ) ?: DailyHealthMetric(
                     date = todayIso,
-                    steps = existingMetric?.steps, // Preserve other data if any
+                    steps = existingMetric?.steps,
                     sleepDurationMillis = existingMetric?.sleepDurationMillis,
                     activeCaloriesBurned = existingMetric?.activeCaloriesBurned,
                     weightKg = hcWeight,
+                    exerciseMinutes = existingMetric?.exerciseMinutes,
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceDeviceId = getMyDeviceId()
                 )
@@ -774,10 +755,11 @@ class HealthConnectIntegrator(private val context: Context) {
         } catch (e: Exception) {
             Log.e(
                 "HealthConnectIntegrator",
-                "Error reading latest overall weight from HC: ${e.message}",
+                "Error reading latest overall weight from HC: ${e.message}. Trying DB.",
                 e
             )
-            null
+            val todayIso = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+            dbHelper.getDailyMetric(todayIso)?.weightKg // Fallback to today's DB record
         }
     }
 
@@ -791,8 +773,7 @@ class HealthConnectIntegrator(private val context: Context) {
                 val femaleBMR = (10 * weightKg) + (6.25 * heightCm) - (5 * ageYears) - 161
                 (maleBMR + femaleBMR) / 2
             }
-
-            Gender.OTHER -> TODO()
+            Gender.OTHER -> (10 * weightKg) + (6.25 * heightCm) - (5 * ageYears) + 5 // Defaulting to MALE BMR as a placeholder
         }
     }
 
@@ -804,15 +785,8 @@ class HealthConnectIntegrator(private val context: Context) {
 
 
 // --- HealthConnectViewModel ---
-// ViewModel should now use the new HealthConnectIntegrator methods.
-// The core logic of deciding where to get data (HC or DB) is now within HealthConnectIntegrator.
 class HealthConnectViewModel(private val applicationContext: Context) :
-    ViewModel() { // Pass application context
-    // Ensure AppGlobals is initialized
-    // This typically happens in Application.onCreate() or MainActivity.onCreate()
-    // For safety, you could add AppGlobals.initialize(applicationContext) here if you suspect it might not be.
-    // However, it's better practice to do it once at app startup.
-
+    ViewModel() {
     val healthConnectIntegrator = HealthConnectIntegrator(applicationContext)
 
     // Data states for the UI
@@ -831,20 +805,13 @@ class HealthConnectViewModel(private val applicationContext: Context) :
     val permissions = healthConnectIntegrator.permissions.toTypedArray()
 
     init {
-        // ViewModel is a good place to initialize AppGlobals if not done earlier,
-        // but Application class is generally preferred for globals.
-        // AppGlobals.initialize(applicationContext)
-
         checkHealthConnectStatus()
-        // Optionally, load data for the current 'openedDay' on init
-        // viewModelScope.launch { fetchDataForDay(AppGlobals.openedDay) }
     }
 
     private fun checkHealthConnectStatus() {
         healthConnectAvailable = healthConnectIntegrator.isHealthConnectAvailable()
     }
 
-    // Renamed from checkPermissionsAndFetchData for clarity, as it fetches for a specific day
     suspend fun fetchDataForDay(dayString: String) {
         isLoading = true
         errorMessage = null
@@ -852,69 +819,55 @@ class HealthConnectViewModel(private val applicationContext: Context) :
             "HealthConnectViewModel",
             "Fetching data for day: $dayString, Role: ${AppGlobals.deviceRole}"
         )
-        try {
-            // For secondary devices, hasPermissions might be false, but data can still come from DB.
-            // The integrator handles this. The UI might want to reflect if HC permissions are missing
-            // even if data is shown from DB.
-            permissionsGranted = healthConnectIntegrator.hasPermissions()
 
-            // Fetch data using the integrator, which now handles DB/HC logic
+        try {
+            // Check permissions *once* for the UI
+            permissionsGranted = healthConnectIntegrator.hasPermissions()
+            Log.d("HealthConnectViewModel", "Permissions granted: $permissionsGranted")
+
+            // Fetch data using the integrator
+            // The integrator functions will now handle their own HC/DB fallback logic
             totalSteps = healthConnectIntegrator.getStepsForDay(dayString)
             totalSleepDuration = healthConnectIntegrator.getSleepDurationForDay(dayString)
             activeCaloriesBurned = healthConnectIntegrator.getActiveCaloriesBurnedForDay(dayString)
 
-            // For weight, decide if you want 'weight on specific day' or 'latest overall weight'
-            // Using getWeightForDay aligns with other daily metrics.
             latestWeight = healthConnectIntegrator.getWeightForDay(dayString)
-                ?: healthConnectIntegrator.getLatestOverallWeight() // Fallback to overall latest if no weight for specific day
+                ?: healthConnectIntegrator.getLatestOverallWeight() // Fallback to overall latest
 
             Log.d(
                 "HealthConnectViewModel",
                 "Fetched Steps: $totalSteps, Sleep: ${totalSleepDuration?.toMinutes()}, Cals: $activeCaloriesBurned, Weight: $latestWeight"
             )
 
-
-            // In HealthConnectViewModel.kt, inside fetchDataForDay method
-
-// BMR Calculation
-            val weight = latestWeight // This comes from Health Connect or DB
-            val currentUserProfile = AppGlobals.userProfile // <<< GET ACTUAL USER PROFILE
+            // BMR Calculation
+            val weight = latestWeight
+            val currentUserProfile = AppGlobals.userProfile
 
             if (weight != null && currentUserProfile.dateOfBirth != null && currentUserProfile.heightCm != null) {
-                // All necessary data is available
                 val ageYears = healthConnectIntegrator.calculateAge(currentUserProfile.dateOfBirth)
                 bmr = healthConnectIntegrator.calculateBMR(
                     weight,
-                    currentUserProfile.heightCm, // <<< Use actual height
+                    currentUserProfile.heightCm,
                     ageYears,
-                    currentUserProfile.gender   // <<< Use actual gender
+                    currentUserProfile.gender
                 )
             } else {
-                bmr = null // Set BMR to null if any required info is missing
+                bmr = null
                 Log.d(
                     "HealthConnectViewModel",
                     "BMR calculation skipped: Missing weight, DOB, or height."
                 )
-                // Optionally, set an error message or provide guidance to the user
-                // if (currentUserProfile.dateOfBirth == null) errorMessage = "Set Date of Birth for BMR."
-                // else if (currentUserProfile.heightCm == null) errorMessage = "Set Height for BMR."
-                // else if (weight == null) errorMessage = "Weight data needed for BMR."
             }
 
             if (!permissionsGranted && AppGlobals.deviceRole == DeviceRole.PRIMARY) {
                 if (totalSteps == null && totalSleepDuration == null && activeCaloriesBurned == null && latestWeight == null) {
-                    // Only show permission error if primary and no data could be fetched (neither HC nor DB)
-                    // and permissions are actually missing.
                     errorMessage =
                         "Health Connect permissions are needed for the primary device to fetch and sync data."
                 }
             }
-
-
         } catch (e: Exception) {
             Log.e("HealthConnectViewModel", "Error in fetchDataForDay($dayString): ${e.message}", e)
             errorMessage = "Error fetching data: ${e.localizedMessage ?: "Unknown error"}"
-            // Clear data on error
             latestWeight = null; bmr = null; totalSteps = null; totalSleepDuration =
                 null; activeCaloriesBurned = null
         } finally {

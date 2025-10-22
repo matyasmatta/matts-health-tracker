@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.health.READ_SLEEP"/>
     <uses-permission android:name="android.permission.health.WRITE_STEPS"/>
     <uses-permission android:name="android.permission.health.READ_MEDICAL_DATA_MEDICATIONS"/>
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
 
     <queries>
         <package android:name="com.google.android.apps.healthdata" />

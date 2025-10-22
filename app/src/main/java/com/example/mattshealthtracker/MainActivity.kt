@@ -108,6 +108,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.disabled
 import androidx.lifecycle.ViewModelProvider
+import com.example.mattshealthtracker.AppUiElements.ValueTile
 import java.text.NumberFormat
 import java.time.Duration
 
@@ -1468,7 +1469,7 @@ fun HealthTrackerScreen(openedDay: String) {
             Text("Externals", style = MaterialTheme.typography.titleLarge)
             // Then, in your UI where you want to display it:
             ValueTile(
-                title = "👣 Steps Today",
+                title = "Steps Today",
                 icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                 iconContentDescription = "Steps icon",
                 isLoading = isLoadingStepsData, // Use specific loading flag
@@ -1765,61 +1766,6 @@ fun HealthTrackerScreen(openedDay: String) {
         )
     }
 }
-
-@Composable
-fun ValueTile(
-    title: String,
-    icon: ImageVector,
-    iconContentDescription: String,
-    isLoading: Boolean,
-    valueString: String?, // The formatted value to display (e.g., "10,532" or "7.5 hrs")
-    modifier: Modifier = Modifier,
-    valueStyle: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.headlineSmall, // Allow customization
-    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary // Allow customization
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = iconContentDescription,
-                modifier = Modifier.size(36.dp),
-                tint = MaterialTheme.colorScheme.primary // Icon tint, can also be a parameter
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                } else {
-                    Text(
-                        text = valueString ?: "N/A",
-                        style = valueStyle,
-                        color = valueColor
-                    )
-                }
-            }
-        }
-    }
-}
-
-
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
