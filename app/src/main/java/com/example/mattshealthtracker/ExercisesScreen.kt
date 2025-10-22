@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height // Added import
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card // Added import
+import androidx.compose.material3.CardDefaults // Added import
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,10 +47,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -56,15 +61,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.LayoutDirection // Added import
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.mattshealthtracker.AppUiElements.CollapsibleCard
 import kotlin.math.roundToInt
 
 // New Enum for CategoryContext
+/* NO LONGER NEEDED
 enum class CategoryContext {
     ROUTINE,    // Shows X/Y exercises, ~Z min left
     BREATHING,  // Shows total minutes
     NONE        // No additional context displayed
 }
+*/
 
 @OptIn(ExperimentalMaterial3Api::class) // For TopAppBar
 @Composable
@@ -75,6 +86,24 @@ fun ExercisesScreen(openedDay: String) {
 
     var showCustomizeSectionsDialog by remember { mutableStateOf(false) }
     val visibleSectionIdsFromAppGlobals by rememberUpdatedState(AppGlobals.visibleExerciseSectionIds)
+    var trendsCardExpanded by rememberSaveable { mutableStateOf(false) }
+    val healthConnectViewModel: HealthConnectViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(HealthConnectViewModel::class.java)) {
+                    @Suppress("UNCHECKED_CAST")
+                    // Pass applicationContext to the ViewModel constructor
+                    return HealthConnectViewModel(context.applicationContext) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
+            }
+        }
+    )
+
+    val coroutineScope = rememberCoroutineScope()
+    LaunchedEffect(openedDay) {
+        healthConnectViewModel.fetchDataForDay(openedDay)
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -229,9 +258,6 @@ fun ExercisesScreen(openedDay: String) {
             }
 
             if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Routines.id)) {
-                if (sectionsRendered > 0) { // Add a divider if other sections were rendered before this one
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
-                }
                 RoutineChecklist(
                     dbHelper = routineDbHelper,
                     date = openedDay,
@@ -243,6 +269,16 @@ fun ExercisesScreen(openedDay: String) {
                     onEveningCheckChange = { newChecks ->
                         eveningChecks.value = newChecks; updateRoutineData()
                     }
+                )
+                sectionsRendered++
+            }
+
+            if (AppGlobals.isExerciseSectionVisible(ExerciseScreenSectionInfo.Weight.id)) {
+                TrendsCard(
+                    expanded = trendsCardExpanded,
+                    onExpandedChange = { trendsCardExpanded = it },
+                    healthConnectViewModel = healthConnectViewModel,
+                    openedDay = openedDay
                 )
                 sectionsRendered++
             }
@@ -446,7 +482,6 @@ fun MinuteCounter(
     }
 }
 
-
 @Composable
 fun BasicExercisesSection(
     pushUps: Int,
@@ -458,17 +493,34 @@ fun BasicExercisesSection(
 ) {
     val completedBasics = (if (pushUps > 0) 1 else 0) + (if (postureCorrections > 0) 1 else 0)
     val totalBasics = 2
-    val estimatedMinutesBasics = 0 // Not relevant for this section's display
+    // val estimatedMinutesBasics = 0 // Not relevant for this section's display
 
-    ExpandableRoutineSection(
-        title = "💫  Basics",
-        defaultExpanded = true,
-        contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 8.dp),
-        totalExercises = totalBasics,
-        completedExercises = completedBasics,
-        totalMinutes = estimatedMinutesBasics,
-        categoryContext = CategoryContext.NONE, // No specific context display for Basics
-        content = {
+    var expanded by rememberSaveable { mutableStateOf(true) } // State is now managed here
+
+    CollapsibleCard(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        titleContent = {
+            val isCompleted = completedBasics > 0 && completedBasics == totalBasics
+            Text(
+                "💫  Basics",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                    color = if (isCompleted) Color.Gray else LocalContentColor.current
+                )
+            )
+        },
+        quickGlanceInfo = {
+            if (completedBasics > 0) {
+                Text(
+                    "$completedBasics/$totalBasics exercises",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
+        },
+        expandableContent = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 ExerciseCounter(
                     label = "Push-Ups",
@@ -506,17 +558,32 @@ fun BreathingSection(
     val totalMinutes = relaxMinutes + sleepMinutes +
             napMinutes + focusMinutes
 
-    val isBreathingCompleted = totalMinutes >= 20
+    // val isBreathingCompleted = totalMinutes >= 20 // This logic is now in titleContent
 
-    ExpandableRoutineSection(
-        title = "🫁  Breathing",
-        defaultExpanded = true,
-        contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 8.dp),
-        totalExercises = 0, // Not used for completion display in this context
-        completedExercises = if (isBreathingCompleted) 1 else 0, // Pass 1 if completed, 0 otherwise
-        totalMinutes = totalMinutes,
-        categoryContext = CategoryContext.BREATHING, // Display total minutes for breathing
-        content = {
+    var expanded by rememberSaveable { mutableStateOf(true) } // State is now managed here
+
+    CollapsibleCard(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        titleContent = {
+            val isCompleted = totalMinutes >= 20
+            Text(
+                "🫁  Breathing",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                    color = if (isCompleted) Color.Gray else LocalContentColor.current
+                )
+            )
+        },
+        quickGlanceInfo = {
+            Text(
+                "$totalMinutes min",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 4.dp)
+            )
+        },
+        expandableContent = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 MinuteCounter(
                     label = "Relax",
@@ -566,17 +633,44 @@ fun RoutineChecklist(
     val estimatedMorningMinutes = 15
     val estimatedEveningMinutes = 20
 
+    // State for each card
+    var morningExpanded by rememberSaveable { mutableStateOf(false) }
+    var eveningExpanded by rememberSaveable { mutableStateOf(false) }
+
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ExpandableRoutineSection(
-            title = "☀️  Morning Routine",
-            defaultExpanded = false,
-            contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 8.dp),
-            totalExercises = totalMorningExercises,
-            completedExercises = completedMorningExercises,
-            totalMinutes = estimatedMorningMinutes,
-            categoryContext = CategoryContext.ROUTINE, // Display exercise progress and time left
-            content = {
+        CollapsibleCard(
+            expanded = morningExpanded,
+            onExpandedChange = { morningExpanded = it },
+            titleContent = {
+                val isCompleted =
+                    completedMorningExercises > 0 && completedMorningExercises == totalMorningExercises
+                Text(
+                    "☀️  Morning Routine",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                        color = if (isCompleted) Color.Gray else LocalContentColor.current
+                    )
+                )
+            },
+            quickGlanceInfo = {
+                val leftMinutes = if (totalMorningExercises > 0) {
+                    val remainingProportion =
+                        (totalMorningExercises - completedMorningExercises).toFloat() / totalMorningExercises.toFloat()
+                    (estimatedMorningMinutes * remainingProportion).roundToInt()
+                } else {
+                    0
+                }
+                val exercisesText = "$completedMorningExercises/$totalMorningExercises done"
+                val timeText = "~$leftMinutes min"
+                Text(
+                    "$exercisesText, $timeText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            },
+            expandableContent = {
                 PostureChecklist(
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
@@ -620,15 +714,38 @@ fun RoutineChecklist(
             }
         )
 
-        ExpandableRoutineSection(
-            title = "🌙  Evening Routine",
-            defaultExpanded = false,
-            contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 24.dp, bottom = 8.dp),
-            totalExercises = totalEveningExercises,
-            completedExercises = completedEveningExercises,
-            totalMinutes = estimatedEveningMinutes,
-            categoryContext = CategoryContext.ROUTINE, // Display exercise progress and time left
-            content = {
+        CollapsibleCard(
+            expanded = eveningExpanded,
+            onExpandedChange = { eveningExpanded = it },
+            titleContent = {
+                val isCompleted =
+                    completedEveningExercises > 0 && completedEveningExercises == totalEveningExercises
+                Text(
+                    "🌙  Evening Routine",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                        color = if (isCompleted) Color.Gray else LocalContentColor.current
+                    )
+                )
+            },
+            quickGlanceInfo = {
+                val leftMinutes = if (totalEveningExercises > 0) {
+                    val remainingProportion =
+                        (totalEveningExercises - completedEveningExercises).toFloat() / totalEveningExercises.toFloat()
+                    (estimatedEveningMinutes * remainingProportion).roundToInt()
+                } else {
+                    0
+                }
+                val exercisesText = "$completedEveningExercises/$totalEveningExercises done"
+                val timeText = "~$leftMinutes min"
+                Text(
+                    "$exercisesText, $timeText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            },
+            expandableContent = {
                 PostureChecklist(
                     innerPadding = PaddingValues(vertical = 8.dp),
                     dbHelper = dbHelper,
@@ -674,102 +791,7 @@ fun RoutineChecklist(
     }
 }
 
-@Composable
-fun ExpandableRoutineSection(
-    title: String,
-    defaultExpanded: Boolean = false,
-    content: @Composable () -> Unit,
-    contentPadding: PaddingValues = PaddingValues(all = 8.dp),
-    totalExercises: Int,
-    completedExercises: Int,
-    totalMinutes: Int,
-    // New parameter to control the context displayed
-    categoryContext: CategoryContext = CategoryContext.ROUTINE
-) {
-    var expanded by rememberSaveable { mutableStateOf(defaultExpanded) }
-
-    // How completion is determined depends on the category context
-    val isCompleted = when (categoryContext) {
-        CategoryContext.ROUTINE -> completedExercises > 0 && completedExercises == totalExercises
-        CategoryContext.BREATHING -> totalMinutes >= 20 // Breathing is complete if total minutes >= 20
-        CategoryContext.NONE -> completedExercises > 0 && completedExercises == totalExercises // Fallback for Basic Exercises
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
-            .padding(contentPadding)
-            .animateContentSize(animationSpec = tween(durationMillis = 300, easing = LinearEasing))
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    textDecoration = if (isCompleted) TextDecoration.LineThrough else TextDecoration.None,
-                    color = if (isCompleted) Color.Gray else LocalContentColor.current
-                )
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Display context based on categoryContext
-                when (categoryContext) {
-                    CategoryContext.ROUTINE -> {
-                        // Re-calculate leftMinutes specifically for ROUTINE context
-                        val leftMinutes = if (totalExercises > 0) {
-                            val remainingProportion = (totalExercises - completedExercises).toFloat() / totalExercises.toFloat()
-                            (totalMinutes * remainingProportion).roundToInt()
-                        } else {
-                            0
-                        }
-                        val exercisesText = "$completedExercises/$totalExercises done"
-                        val timeText = "~$leftMinutes min"
-                        Text(
-                            "$exercisesText, $timeText",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                    CategoryContext.BREATHING -> {
-                        // For breathing, show the total accumulated minutes
-                        Text(
-                            "$totalMinutes min",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                    CategoryContext.NONE -> {
-                        // For Basic exercises, show X/X exercises if some progress is made
-                        if (completedExercises > 0) {
-                            Text(
-                                "$completedExercises/$totalExercises exercises",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (expanded) "Collapse" else "Expand"
-                    )
-                }
-            }
-        }
-        if (expanded) {
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
-            content()
-        }
-    }
-}
+// --- ExpandableRoutineSection has been REMOVED ---
 
 @Composable
 fun PostureChecklist(

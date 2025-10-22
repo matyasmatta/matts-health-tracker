@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.SelfImprovement
@@ -96,11 +97,14 @@ sealed class ExerciseScreenSectionInfo(
 
     object Routines :
         ExerciseScreenSectionInfo("routines", "Routine Checklist", Icons.Default.Checklist)
+
+    object Weight :
+        ExerciseScreenSectionInfo("weight", "Weight Trends", Icons.Default.MonitorWeight)
     // Add more sections here if they become available in ExercisesScreen
 
     companion object {
         fun getAllSections(): List<ExerciseScreenSectionInfo> {
-            return listOf(Basics, Breathing, Routines)
+            return listOf(Basics, Breathing, Routines, Weight)
         }
 
         fun getSectionById(id: String): ExerciseScreenSectionInfo? {

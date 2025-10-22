@@ -4,7 +4,7 @@ package com.example.mattshealthtracker
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -27,12 +26,10 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle // Still needed if you use TextStyle for default values, or remove if not.
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
@@ -42,14 +39,12 @@ object AppUiElements {
     fun CollapsibleCard(
         titleContent: @Composable () -> Unit,
         modifier: Modifier = Modifier.fillMaxWidth(),
-        // Let's make the default padding more explicit for its purpose
-        // This padding is for the overall card content area.
-        contentAreaPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp), // Symmetrical default
+        contentAreaPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 9.dp),
         isExpandable: Boolean = true,
         expanded: Boolean = false,
         onExpandedChange: ((Boolean) -> Unit)? = null,
         quickGlanceInfo: @Composable (() -> Unit)? = null,
-        defaultContent: @Composable (() -> Unit)? = null, // Make it nullable to check if it exists
+        defaultContent: @Composable (() -> Unit)? = null,
         defaultContentModifier: Modifier = Modifier,
         expandableContent: @Composable (() -> Unit)? = null,
         expandableContentModifier: Modifier = Modifier,
@@ -58,14 +53,14 @@ object AppUiElements {
     ) {
         Card(
             modifier = modifier,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(0.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium)
-                    // Apply only HORIZONTAL padding here. Vertical padding will be handled by content.
-                    .padding(contentAreaPadding.calculateHorizontalPadding(LayoutDirection.Ltr))
+                    // Horizontal padding is now applied to child elements, not here
                     .animateContentSize(
                         animationSpec = tween(
                             durationMillis = 300,
@@ -84,8 +79,10 @@ object AppUiElements {
                                 )
                             } else it
                         }
-                        // Add TOP padding for the title row from contentAreaPadding
-                        .padding(top = contentAreaPadding.calculateTopPadding(), bottom = 2.dp), // Small bottom padding for title itself
+                        // Apply horizontal padding here
+                        .padding(contentAreaPadding.calculateHorizontalPadding(LayoutDirection.Ltr))
+                        // Apply top padding. Bottom padding is handled by spacers now.
+                        .padding(top = contentAreaPadding.calculateTopPadding()),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -115,52 +112,43 @@ object AppUiElements {
 
                 // Default Content Logic
                 if (showDefaultContent) {
-                    // Spacer ABOVE default content if it's the first content element below title
-                    // This is handled by the overall column's bottom padding now.
-                    // Spacer(modifier = Modifier.height(contentAreaPadding.calculateTopPadding() / 2)) // Or a fixed value like 8.dp
-
-                    Column(modifier = defaultContentModifier) {
-                        defaultContent?.invoke() // defaultContent is nullable now
-                    }
-                    // Add BOTTOM padding for the default content section
-                    // This ensures space at the bottom if it's the last thing shown.
-                    if (!showExpandableContent) { // Only add if expandable content isn't going to be shown after it
-                        Spacer(modifier = Modifier.height(contentAreaPadding.calculateBottomPadding()))
+                    // Add consistent spacer between title and content
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(
+                        modifier = defaultContentModifier
+                            // Apply horizontal padding to this content block
+                            .padding(contentAreaPadding.calculateHorizontalPadding(LayoutDirection.Ltr))
+                    ) {
+                        defaultContent?.invoke()
                     }
                 }
 
                 // Expandable Content Logic
                 if (showExpandableContent) {
-                    if (showDefaultContent) { // Show divider only if default content was also shown above
+                    if (showDefaultContent) {
+                        // Divider between default and expandable content
                         Divider(modifier = Modifier.padding(vertical = 8.dp))
                     } else {
-                        // If no default content, but expandable content, add some top space for it
-                        Spacer(modifier = Modifier.height(contentAreaPadding.calculateTopPadding() / 2)) // Or a fixed 8.dp
+                        // If no default content, add consistent spacer between title and content
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
-                    Column(modifier = expandableContentModifier) {
+                    Column(
+                        modifier = expandableContentModifier
+                            // Apply horizontal padding to this content block
+                            .padding(contentAreaPadding.calculateHorizontalPadding(LayoutDirection.Ltr))
+                    ) {
                         expandableContent?.invoke()
                     }
-                    // Add BOTTOM padding for the expandable content section
-                    Spacer(modifier = Modifier.height(contentAreaPadding.calculateBottomPadding()))
                 }
 
-                // If NOTHING is shown below the title (e.g. collapsed, no default, no expandable)
-                // The title row itself should get the bottom padding.
-                // This is a bit tricky with the current structure.
-                // A simpler approach is to ensure the main Column has a minimum bottom padding
-                // if nothing else provides it.
-                // However, the current logic relies on spacers *after* content.
-
-                // If neither default nor expandable content is shown, but the title is,
-                // we need to ensure the overall column's bottom padding is respected.
-                // The current structure with spacers *after* content handles this for when content exists.
-                // If there's NO content at all below title, the title row's bottom padding (2.dp) +
-                // the main column's implicit 0 bottom padding (from its own padding parameter)
-                // would be used.
-
-                // Let's refine the main column padding to only apply horizontal,
-                // and then add top/bottom padding explicitly around content blocks.
-
+                // Bottom padding
+                if (showDefaultContent || showExpandableContent) {
+                    // Add bottom padding if any content is shown
+                    Spacer(modifier = Modifier.height(contentAreaPadding.calculateBottomPadding()))
+                } else {
+                    // Add bottom padding if card is collapsed (no content shown)
+                    Spacer(modifier = Modifier.height(contentAreaPadding.calculateBottomPadding()))
+                }
             }
         }
     }

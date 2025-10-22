@@ -883,13 +883,15 @@ fun TrendsCard(
 
     AppUiElements.CollapsibleCard(
         titleContent = {
-            Text("📊 Weight Trends", style = MaterialTheme.typography.titleMedium)
+            Text("\uD83E\uDDCD  Weight Trends", style = MaterialTheme.typography.titleMedium)
         },
         expanded = expanded,
         onExpandedChange = onExpandedChange,
         isExpandable = true,
+
+        // --- All summary logic is now here ---
         quickGlanceInfo = {
-            if (!expanded && weightData.isNotEmpty()) {
+            if (weightData.isNotEmpty()) {
                 val latestWeight = weightData.lastOrNull()?.weight
                 val firstWeight = weightData.firstOrNull()?.weight
 
@@ -898,43 +900,49 @@ fun TrendsCard(
                     val changeText = if (change > 0) "+${String.format("%.1f", change)} kg"
                     else "${String.format("%.1f", change)} kg"
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(end = 4.dp) // Match routine padding
+                    ) {
                         Text(
                             "${String.format("%.1f", latestWeight)} kg",
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodySmall, // Match routine style
+                            color = MaterialTheme.colorScheme.onSurfaceVariant // Match routine color
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "($changeText last 30d)",
+                            "($changeText / 30d)",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (change < 0) Color.Red else if (change > 0) Color.Green else Color.Gray
+                            color = if (change < 0) MaterialTheme.colorScheme.error
+                            else if (change > 0) Color(0xFF006400) // Dark Green
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+            } else if (!isLoadingWeightData) {
+                // Show "No data" message in the same spot
+                Text(
+                    "No weight data available",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
             }
+            // While isLoading, this will just be blank, which is fine
         },
-        defaultContent = {
-            if (!expanded) {
-                Column(modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp)) {
-                    if (weightData.isEmpty() && !isLoadingWeightData) {
-                        Text(
-                            "No weight data available",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        },
+
+        // --- No default content needed ---
+        defaultContent = null,
         hideDefaultWhenExpanded = true,
+
         expandableContent = {
             Column(modifier = Modifier.padding(top = 8.dp)) {
                 if (isLoadingWeightData) {
-                    Box(modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                    ) {
                         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     }
                 } else if (weightError != null) {
@@ -950,6 +958,7 @@ fun TrendsCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
+                    // Assuming these composables exist elsewhere in your code
                     // Weight statistics
                     WeightStatsSection(weightData)
 
@@ -962,7 +971,6 @@ fun TrendsCard(
         }
     )
 }
-
 // Data class for weight points
 data class WeightDataPoint(
     val date: LocalDate,
